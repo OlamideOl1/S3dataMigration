@@ -13,6 +13,8 @@
       "Effect": "Allow",
       "Resource": [
         "arn:aws:s3:::legacybucket77",
+        "arn:aws:s3:::legacybucket77/*",
+        "arn:aws:s3:::newproductionbucket77/*",
         "arn:aws:s3:::newproductionbucket77"
       ]
     }
