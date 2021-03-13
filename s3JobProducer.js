@@ -62,6 +62,8 @@ function listAllKeys(token) {
 }
 
 function addObjestsInQueue(inArray) {
+  
+  let isProcessEnding = false
 
   for (var cnt = 0; cnt < inArray.length; cnt++) {
     // console.log("each key value is " + inArray[cnt].Key);
@@ -69,9 +71,43 @@ function addObjestsInQueue(inArray) {
       bucketObjects: inArray[cnt].Key
     }, {
       removeOnComplete: true
-    }).catch(error => alert(error.message));
+    }).catch(error => console.log(error.message));
 
   }
 
   videoQueue.close();
+
+
+
+  process.on('SIGINT', () => {
+    if (!isProcessEnding) {
+      isProcessEnding = true
+      setTimeout(() => {
+        Promise.all([
+          videoQueue.close(),
+        ]).then(() => {
+          console.log('Successfully shut down all queue, because of sigint. Bye!')
+          process.exit(0)
+        })
+      }, 1000)
+    }
+  })
+
+  process.on('SIGTERM', () => {
+    if (!isProcessEnding) {
+      isProcessEnding = true
+      setTimeout(
+        () =>
+        Promise.all([
+          videoQueue.close(),
+        ]).then(() => {
+          console.log(
+            'Successfully shut down all queue, because of sigterm. Bye!'
+          )
+          process.exit(0)
+        }),
+        1000
+      )
+    }
+  })
 }
