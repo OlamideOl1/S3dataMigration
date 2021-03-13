@@ -4,7 +4,7 @@ debugger;
 
 var Queue = require('bull');
 
-var videoQueue = new Queue('video transcodingf', 'redis://52.86.55.47:6379');
+var videoQueue = new Queue('video transcoder', 'redis://52.86.55.47:6379');
 
 videoQueue.process(function(job, done) {
 
@@ -59,4 +59,4 @@ videoQueue.count().then(res => console.log('new count variable is :\n',res));
 
 videoQueue.getJobCounts().then(res => console.log('third Job Count:\n',res));
 
-});
+}).catch(error => alert(error.message));
