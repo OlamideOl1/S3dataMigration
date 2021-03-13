@@ -23,46 +23,63 @@ s3 = new AWS.S3({
 ////////////////////////////////////////
 
 s3.listObjectsV2(params, function(err, data) {
-  if (err) {
-    console.log(err, err.stack); // an error occurred
-  } else {
-    allKeys = allKeys.concat(data.Contents);
-    if (data.IsTruncated) {
-
-      listAllKeys(data.NextContinuationToken);
-
+  try {
+    if (err) {
+      console.log(err, err.stack); // an error occurred
     } else {
+      if (data.Contents.length) {
+        allKeys = allKeys.concat(data.Contents);
 
-      addObjestsInQueue(allKeys);
 
+        if (data.IsTruncated) {
+
+          listAllKeys(data.NextContinuationToken);
+
+        } else {
+
+          addObjestsInQueue(allKeys);
+
+        }
+      }
     }
+
+  } catch (e) {
+
+    console.log("caught exception " + e);
+
   }
+
 });
 
 
 
 function listAllKeys(token) {
-
-  if (token) {
-    params.ContinuationToken = token;
-  }
-  s3.listObjectsV2(params, function(err, data) {
-
-    allKeys = allKeys.concat(data.Contents);
-
-    if (data.IsTruncated) {
-      listAllKeys(data.NextContinuationToken);
-    } else {
-
-      addObjestsInQueue(allKeys);
-
+  try {
+    if (token) {
+      params.ContinuationToken = token;
     }
+    s3.listObjectsV2(params, function(err, data) {
 
-  });
+      allKeys = allKeys.concat(data.Contents);
+
+      if (data.IsTruncated) {
+        listAllKeys(data.NextContinuationToken);
+      } else {
+
+        addObjestsInQueue(allKeys);
+
+      }
+
+    });
+  } catch (e) {
+
+    console.log("caught exception " + e);
+
+  }
 }
 
 function addObjestsInQueue(inArray) {
-  
+
   let isProcessEnding = false
 
   for (var cnt = 0; cnt < inArray.length; cnt++) {
