@@ -72,7 +72,7 @@ function copyObjectToDestinationBucket(params,sourceObject) {
 
     // params.Key = targetObjectPrefix + sourceObjectSplit[sourceObjectSplit.length - 1];
 
-    params.Key = targetObjectPrefix + sourceObjectSplit[1];
+    params.Key = targetObjectPrefix + sourceObjectSplit[sourceObjectSplit.length - 1];
 
     // console.log("this is the key value before copy " + params.Key)
 
