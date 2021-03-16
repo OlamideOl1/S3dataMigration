@@ -1,167 +1,130 @@
-const mariadb = require('mariadb');
 var Queue = require('bull');
-var timediff = require('timediff');
 
-var connectionLimit = 10
+const videoQueue = new Queue('video transcoder', 'redis://52.86.55.47:6379');
 
-var dbConfig = {
-  host: "100.25.102.220",
-  user: "root",
-  password: 'Ab@123456',
-  database: "userImageData",
-  connectionLimit: connectionLimit,
-  waitForConnections: true, // Default value.
-  queueLimit: 0 // Unlimited - default value.
+// var videoQueue = new Queue('video transcoding', 'redis://52.86.55.47:6379');
+
+// var fs = require('fs');
+var AWS = require('aws-sdk');
+var s3bucket = "legacybucket77";
+var objectPrefix = "image"
+var allKeys = [];
+
+var params = {
+  Bucket: s3bucket,
+  Prefix: objectPrefix
+  /* required */
 };
 
-
-const objectQueue = new Queue('video transcoder', {
-
-  redis: {
-    port: 6379,
-    host: "100.25.102.220",
-    // maxRetriesPerRequest: null,
-    // enableReadyCheck: false,
-    enableOfflineQueue: false
-  }
+s3 = new AWS.S3({
+  region: 'us-east-1'
 });
 
-var targetObjectPrefix = "avatar/";
+////////////////////////////////////////
 
-// var promiseAllCounter = 1;
-
-var pool = mariadb.createPool(dbConfig);
-
-var stageTableforMerge = "stageTableforMerge";
-
-var startDateTime = new Date();
-
-var targetS3Bucket = "newproductionbucket77";
-
-var maxUploadPerInvocation = 16000000;
-
-var setRecordsPerBatch = 20000;
-
-var s3bulkList = [];
-
-var allBatchPromiseList = [];
-
-for (var i = 0; i < 20000000; i++) {
-
-  var oldImagePath = "image/avatar" + i + ".txt";
-
-  s3bulkList.push(oldImagePath);
-
-}
-
-loadS3toQueueDatabase(s3bulkList, 0, s3bulkList.length);
+s3.listObjectsV2(params, function(err, data) {
+  try {
+    if (err) {
+      console.log(err, err.stack); // an error occurred
+    } else {
+      if (data.Contents.length) {
+        allKeys = allKeys.concat(data.Contents);
 
 
-function loadS3toQueueDatabase(s3bulkList, startIndex, endIndex) {
+        if (data.IsTruncated) {
 
-  var loopEndIndex = ((endIndex - startIndex) < maxUploadPerInvocation) ? endIndex : (maxUploadPerInvocation + startIndex);
+          listAllKeys(data.NextContinuationToken);
 
-console.log("at first entry "+ loopEndIndex);
+        } else {
 
-  var bulkList = [];
+          addObjestsInQueue(allKeys);
 
-  var recordsPerBatch = setRecordsPerBatch;
-
-  var eachList = [];
-
-  var batchCounter = 1;
-
-  var allBatchPromiseList = [];
-
-  for (var i = startIndex; i < loopEndIndex; i++) {
-
-    eachList = [];
-
-    var oldImagePath = s3bulkList[i];
-
-    var sourceObjectSplit = oldImagePath.split('/');
-
-    var newImagePath = targetObjectPrefix + sourceObjectSplit[sourceObjectSplit.length - 1];
-
-    eachList.push("'" + oldImagePath + "'");
-    eachList.push("'" + newImagePath + "'");
-
-    bulkList.push(eachList);
-
-    // queueList.push(objectQueue.add({
-    //   bucketObjects: oldImagePath})
-    // .then(res => console.log("add to queue successful = " + error.message) )
-    // .catch(error => console.log("add to queue failed see error = " + error.message)));
-
-    if (batchCounter == recordsPerBatch || batchCounter == loopEndIndex) {
-
-      batchQuery = "INSERT INTO " + stageTableforMerge + " (OldImageName,NewImageName) values (?, ?)";
-
-      allBatchPromiseList.push(processBatchQuery(batchQuery, bulkList));
-
-      recordsPerBatch = recordsPerBatch + setRecordsPerBatch;
-
-      bulkList = [];
-
-      // queueList = [];
-
+        }
+      }
     }
 
-    // promiseAllCounter++;
+  } catch (e) {
 
-    batchCounter++;
+    console.log("caught exception " + e);
 
   }
 
-  Promise.allSettled(allBatchPromiseList).then(function() {
+});
 
-    if(loopEndIndex == endIndex){
 
-      console.log('ALL BATCH INSERT QUERIES ARE NOW COMPLETED');
 
-      var endDateTime = new Date();
-
-      var expended = timediff(startDateTime, endDateTime, 'YDHmS');
-
-      console.log("process expended: " + expended.hours + ":" + expended.minutes + ":" + expended.seconds);
-
-      pool.end();
-
-      objectQueue.close();
-
-    }else{
-
-        console.log("Current set is done inserting, now commencing next set of batch upload");
-
-        loadS3toQueueDatabase(s3bulkList, loopEndIndex, s3bulkList.length);
-
+function listAllKeys(token) {
+  try {
+    if (token) {
+      params.ContinuationToken = token;
     }
+    s3.listObjectsV2(params, function(err, data) {
 
-  });
+      allKeys = allKeys.concat(data.Contents);
 
+      if (data.IsTruncated) {
+        listAllKeys(data.NextContinuationToken);
+      } else {
+
+        addObjestsInQueue(allKeys);
+
+      }
+
+    });
+  } catch (e) {
+
+    console.log("caught exception " + e);
+
+  }
 }
 
-async function processBatchQuery(batchQuery, bulkList) {
+function addObjestsInQueue(inArray) {
 
-  console.log("now attempting to send query");
+  let isProcessEnding = false
 
-  var res = await pool.batch(batchQuery, bulkList).catch(err => {
+  for (var cnt = 0; cnt < inArray.length; cnt++) {
+    // console.log("each key value is " + inArray[cnt].Key);
+    const job = videoQueue.add({
+      bucketObjects: inArray[cnt].Key
+    }, {
+      removeOnComplete: true
+    }).catch(error => console.log(error.message));
 
-    //console.log("Batch insert failed, error = " + err.code);  //ER_GET_CONNECTION_TIMEOUT
+  }
 
-    if (err.code == "ER_GET_CONNECTION_TIMEOUT" || err.code == "ER_CONNECTION_TIMEOUT") {
+  videoQueue.close();
 
-      console.log("now retrying");
 
-      return processBatchQuery(batchQuery, bulkList);
 
-    } else {
-      console.log("error has occured in reconnect and will not retry, please see details " + err.code + " // " + err.message)
-
-      return err;
+  process.on('SIGINT', () => {
+    if (!isProcessEnding) {
+      isProcessEnding = true
+      setTimeout(() => {
+        Promise.all([
+          videoQueue.close(),
+        ]).then(() => {
+          console.log('Successfully shut down all queue, because of sigint. Bye!')
+          process.exit(0)
+        })
+      }, 1000)
     }
-  });
+  })
 
-  console.log("Batch insert successful, records affected = " + res.affectedRows);
-
+  process.on('SIGTERM', () => {
+    if (!isProcessEnding) {
+      isProcessEnding = true
+      setTimeout(
+        () =>
+        Promise.all([
+          videoQueue.close(),
+        ]).then(() => {
+          console.log(
+            'Successfully shut down all queue, because of sigterm. Bye!'
+          )
+          process.exit(0)
+        }),
+        1000
+      )
+    }
+  })
 }
