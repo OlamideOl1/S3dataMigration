@@ -5,7 +5,7 @@ var timediff = require('timediff');
 var connectionLimit = 10
 
 var dbConfig = {
-  host: "100.25.102.220",
+  host: "localhost",
   user: "root",
   password: 'Ab@123456',
   database: "userImageData",
@@ -14,23 +14,61 @@ var dbConfig = {
   queueLimit: 0 // Unlimited - default value.
 };
 
+const redisHost = "100.26.144.108";
+const redisPort = 6379;
 
-const objectQueue = new Queue('video transcoder', {
+var redisParam = {
+  port: redisPort,
+  host: redisHost,
+  // maxRetriesPerRequest: null,
+  // enableReadyCheck: false,
+  enableOfflineQueue: false
+}
 
-  redis: {
-    port: 6379,
-    host: "100.25.102.220",
-    // maxRetriesPerRequest: null,
-    // enableReadyCheck: false,
-    enableOfflineQueue: false
+var redisParamOffline = {
+  port: redisPort,
+  host: redisHost,
+  // maxRetriesPerRequest: null,
+  // enableReadyCheck: false,
+  // enableOfflineQueue: false
+}
+
+const objectQueue = new Queue('objectQueue', {
+  redis: redisParam
+});
+
+const executionCompleteQueue = new Queue('executionCompleteQueue', {
+  redis: redisParamOffline
+});
+
+executionCompleteQueue.count().then(res => {
+
+  if (res) {
+
+    console.log('executionCompleteQueue count is not empty :\n');
+
+    console.log('Producer node has already completed successfully, set RERUN_UPLOAD in variable file to true to start process again:\n');
+
+    executionCompleteQueue.close();
+
+    process.exit();
   }
+
+  executionCompleteQueue.close();
+
+}).catch(err => {
+
+  console.log('Redis server is not running, review it is available on: ' + redisHost + " : " + redisPort);
+
+  executionCompleteQueue.close();
+
+  process.exit();
+
 });
 
 var targetObjectPrefix = "avatar/";
 
-// var promiseAllCounter = 1;
-
-var pool = mariadb.createPool(dbConfig);
+//var pool = mariadb.createPool(dbConfig);
 
 var stageTableforMerge = "stageTableforMerge";
 
@@ -38,15 +76,15 @@ var startDateTime = new Date();
 
 var targetS3Bucket = "newproductionbucket77";
 
-var maxUploadPerInvocation = 16000000;
+var maxUploadPerInvocation = 1000000;
 
-var setRecordsPerBatch = 20000;
+var setRecordsPerBatch = 30000;
 
 var s3bulkList = [];
 
 var allBatchPromiseList = [];
 
-for (var i = 0; i < 20000000; i++) {
+for (var i = 0; i < 10000000; i++) {
 
   var oldImagePath = "image/avatar" + i + ".txt";
 
@@ -56,12 +94,9 @@ for (var i = 0; i < 20000000; i++) {
 
 loadS3toQueueDatabase(s3bulkList, 0, s3bulkList.length);
 
-
 function loadS3toQueueDatabase(s3bulkList, startIndex, endIndex) {
 
   var loopEndIndex = ((endIndex - startIndex) < maxUploadPerInvocation) ? endIndex : (maxUploadPerInvocation + startIndex);
-
-console.log("at first entry "+ loopEndIndex);
 
   var bulkList = [];
 
@@ -88,26 +123,24 @@ console.log("at first entry "+ loopEndIndex);
 
     bulkList.push(eachList);
 
-    // queueList.push(objectQueue.add({
-    //   bucketObjects: oldImagePath})
-    // .then(res => console.log("add to queue successful = " + error.message) )
-    // .catch(error => console.log("add to queue failed see error = " + error.message)));
-
     if (batchCounter == recordsPerBatch || batchCounter == loopEndIndex) {
 
-      batchQuery = "INSERT INTO " + stageTableforMerge + " (OldImageName,NewImageName) values (?, ?)";
+      allBatchPromiseList.push(objectQueue.add({
+          bucketObjects: bulkList
+        }).then(res => console.log("add to queue successful"))
+        .catch(error => {
+          console.log("add to queue failed see error = " + error.message);
+          // Will now remove last item (failed item) from db batch so it will not get loaded to database
 
-      allBatchPromiseList.push(processBatchQuery(batchQuery, bulkList));
+          bulkList.pop(eachList);
 
-      recordsPerBatch = recordsPerBatch + setRecordsPerBatch;
+        }));
+
+      recordsPerBatch += (( loopEndIndex - i - 1) < setRecordsPerBatch) ? (loopEndIndex - i - 1) : setRecordsPerBatch;
 
       bulkList = [];
 
-      // queueList = [];
-
     }
-
-    // promiseAllCounter++;
 
     batchCounter++;
 
@@ -115,9 +148,9 @@ console.log("at first entry "+ loopEndIndex);
 
   Promise.allSettled(allBatchPromiseList).then(function() {
 
-    if(loopEndIndex == endIndex){
+    if (loopEndIndex == endIndex) {
 
-      console.log('ALL BATCH INSERT QUERIES ARE NOW COMPLETED');
+      console.log('ALL QUEUE UPLOAD ARE NOW COMPLETED');
 
       var endDateTime = new Date();
 
@@ -125,43 +158,23 @@ console.log("at first entry "+ loopEndIndex);
 
       console.log("process expended: " + expended.hours + ":" + expended.minutes + ":" + expended.seconds);
 
-      pool.end();
+      //    pool.end();
 
       objectQueue.close();
 
-    }else{
-
-        console.log("Current set is done inserting, now commencing next set of batch upload");
-
-        loadS3toQueueDatabase(s3bulkList, loopEndIndex, s3bulkList.length);
-
-    }
-
-  });
-
-}
-
-async function processBatchQuery(batchQuery, bulkList) {
-
-  console.log("now attempting to send query");
-
-  var res = await pool.batch(batchQuery, bulkList).catch(err => {
-
-    //console.log("Batch insert failed, error = " + err.code);  //ER_GET_CONNECTION_TIMEOUT
-
-    if (err.code == "ER_GET_CONNECTION_TIMEOUT" || err.code == "ER_CONNECTION_TIMEOUT") {
-
-      console.log("now retrying");
-
-      return processBatchQuery(batchQuery, bulkList);
-
     } else {
-      console.log("error has occured in reconnect and will not retry, please see details " + err.code + " // " + err.message)
 
-      return err;
+      console.log("Current set is done inserting, now commencing next set of batch upload");
+
+      //  loadS3toQueueDatabase(s3bulkList, loopEndIndex, s3bulkList.length);
+
+      setTimeout(function() {
+        console.log("now waiting");
+        loadS3toQueueDatabase(s3bulkList, loopEndIndex, s3bulkList.length);
+      }, 150);
+
     }
-  });
 
-  console.log("Batch insert successful, records affected = " + res.affectedRows);
+  });
 
 }
