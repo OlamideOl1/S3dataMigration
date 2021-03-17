@@ -2,16 +2,26 @@ const mariadb = require('mariadb');
 const Queue = require('bull');
 const util = require('util')
 const AWS = require('aws-sdk');
+var timediff = require('timediff');
 
 s3 = new AWS.S3({
   region: 'us-east-1'
 });
 
 const targetS3Bucket = "newproductionbucket77";
-const sourceS3Bucket = "legacybucket77"
-const targetObjectPrefix = "avatar/"
+const sourceS3Bucket = "legacybucket77";
+const targetObjectPrefix = "avatar/";
+
+var connectionLimit = 10;
+
+var stageTableforMerge = "stageTableforMerge";
+
+var pushBucket = [];
+
+var tempObjectList = [];
+
 const dbConfig = {
-  host: "100.25.102.220",
+  host: "52.87.211.181",
   user: "root",
   password: 'Ab@123456',
   database: "userImageData",
@@ -20,18 +30,22 @@ const dbConfig = {
   queueLimit: 0 // Unlimited - default value.
 };
 
-const redisHost = "100.25.102.220";
+
+
+const redisHost = "52.87.211.181";
 const redisPort = 6379;
+
+var startDateTime = new Date();
 
 var redisParam = {
   port: redisPort,
-  host: redisHost
+  host: redisHost,
+  enableOfflineQueue: false
 }
 
 var redisParamOffline = {
   port: redisPort,
   host: redisHost,
-  enableOfflineQueue: false
 }
 
 const objectQueue = new Queue('objectQueue', {
@@ -41,6 +55,19 @@ const objectQueue = new Queue('objectQueue', {
 const objectQueueChecker = new Queue('objectQueue', {
   redis: redisParamOffline
 });
+
+const s3CopyObject = (params) => {
+  return new Promise((resolve, reject) => {
+    s3.copyObject(params, (err, data) => {
+      if (err) {
+        return reject(err);
+      }
+      resolve(data);
+    });
+  });
+}
+
+var pool = mariadb.createPool(dbConfig);
 
 objectQueueChecker.count().then(res => {
 
@@ -52,7 +79,7 @@ objectQueueChecker.count().then(res => {
 
   }
 
-  objectQueueChecker.close();
+  // objectQueueChecker.close();
 
 }).catch(err => {
 
@@ -60,62 +87,150 @@ objectQueueChecker.count().then(res => {
 
   objectQueueChecker.close();
 
-  process.exit();
+  objectQueue.close();
+
+  // process.exit();
 
 });
 
-const s3CopyObject = util.promisify(s3.copyObject);
+objectQueue.process(function(job, done) {
 
-videoQueue.process(function(job, done) {
+  pool = mariadb.createPool(dbConfig);
+
+  startDateTime = new Date();
 
   var params = {
     Bucket: targetS3Bucket
   };
 
-  var promiseAll = job.data.bucketObjects.map(eachSourceObject => copyObjectToDestinationBucket(params, eachObjectlist));
+  // console.log("before map = " + job.data.bucketObjects);
+
+  var promiseAll = job.data.bucketObjects.map(eachSourceObjectList => copyObjectToDestinationBucket(params, eachSourceObjectList));
+
+  // console.log("after map = ");
 
   Promise.allSettled(promiseAll).then(function() {
 
     console.log("All objects pushed to destination bucket");
 
+    // objectQueue.close();
+
+    batchQuery = "INSERT INTO " + stageTableforMerge + " (OldImageName,NewImageName) values (?, ?)";
+
+    if (pushBucket.length > 0) {
+
+      processBatchQuery(batchQuery, pushBucket);
+
+    }else{
+      pool.end();
+    }
+
+    done();
+
   });
 
-}).catch(error => console.log(error.message));
+}).catch(error => console.log("Error occured, have a look " + error.message));
 
 objectQueueChecker.on('drained', function() {
   // Emitted every time the queue has processed all the waiting jobs (even if there can be some delayed jobs not yet processed)
 
   console.log("All jobs in the queue have now been completed.");
 
+  // objectQueueChecker.close();
+
+  // objectQueue.close();
+
 });
 
+async function copyObjectToDestinationBucket(params, eachSourceObjectList) {
 
-async function copyObjectToDestinationBucket(params, sourceObject) {
+  // try {
 
-  try {
+  sourceObject = eachSourceObjectList.oldImagePath;
 
-    params.CopySource = "/" + sourceS3Bucket + "/" + sourceObject;
+  // console.log("what was received before s3 call = " + sourceObject);
 
-    var sourceObjectSplit = sourceObject.split('/');
+  sourceObject = sourceObject.replaceAll("'", '');
 
-    params.Key = targetObjectPrefix + sourceObjectSplit[sourceObjectSplit.length - 1];
+  params = {
+    Bucket: targetS3Bucket
+  };
 
-    var s3Response = await s3CopyObject(params).catch(err => {
+  params.CopySource = "/" + sourceS3Bucket + "/" + sourceObject;
 
-      console.log("Error occured during s3 bucket upload " + err);
+  // console.log("copy source is " + params.CopySource);
+
+  var sourceObjectSplit = sourceObject.split('/');
+
+  params.Key = targetObjectPrefix + sourceObjectSplit[sourceObjectSplit.length - 1];
+
+  return s3CopyObject(params).then(function(res) {
+    // console.log("it is populating recs");
+
+    tempObjectList = [];
+
+    tempObjectList.push(eachSourceObjectList.oldImagePath);
+    tempObjectList.push(eachSourceObjectList.newImagePath);
+
+    pushBucket.push(tempObjectList);
+  }).catch(function(err) {
+
+    console.log("Error occured during s3 bucket upload " + err);
+
+    // return err;
+
+  });
+
+  // console.log("s3Response is " + s3Response);
+
+  // if (s3Response) {
+  //
+  //
+  // }
+
+  // return new Promise((resolve, reject) => { resolve("done")});
+
+  // return s3Response;
+
+  // } catch (e) {
+  //
+  //   console.log("caught exception " + e);
+  //
+  //   return e;
+  //
+  // }
+
+}
+
+async function processBatchQuery(batchQuery, bulkList) {
+
+  console.log("now attempting to send query");
+
+  var res = await pool.batch(batchQuery, bulkList).catch(err => {
+
+    //console.log("Batch insert failed, error = " + err.code);  //ER_GET_CONNECTION_TIMEOUT
+
+    if (err.code == "ER_GET_CONNECTION_TIMEOUT" || err.code == "ER_CONNECTION_TIMEOUT") {
+
+      console.log("now retrying");
+
+      return processBatchQuery(batchQuery, bulkList);
+
+    } else {
+      console.log("error has occured in reconnect and will not retry, please see details " + err.code + " // " + err.message)
 
       return err;
+    }
+  });
 
-    });
+  console.log("Batch insert successful, records affected = " + res.affectedRows);
 
-    return s3Response;
+  var endDateTime = new Date();
 
-  } catch (e) {
+  var expended = timediff(startDateTime, endDateTime, 'YDHmS');
 
-    console.log("caught exception " + err);
+  console.log("process expended: " + expended.hours + ":" + expended.minutes + ":" + expended.seconds);
 
-    return err;
-
-  }
+  pool.end();
 
 }
