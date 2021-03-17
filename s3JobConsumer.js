@@ -1,25 +1,70 @@
-var Queue = require('bull');
-
-var videoQueue = new Queue('video transcoder', 'redis://52.86.55.47:6379');
-// var videoQueue = new Queue('video transcoding', 'redis://52.86.55.47:6379');
-
-// var fs = require('fs');
-
-var AWS = require('aws-sdk');
-var targetS3Bucket = "newproductionbucket77";
-var sourceS3Bucket = "legacybucket77"
-var targetObjectPrefix = "avatar/"
-
-var s3CopyFlag = new Boolean(false);
-
-var dbUpdateFlag = new Boolean(false);
-
-
+const mariadb = require('mariadb');
+const Queue = require('bull');
+const util = require('util')
+const AWS = require('aws-sdk');
 
 s3 = new AWS.S3({
   region: 'us-east-1'
 });
 
+const targetS3Bucket = "newproductionbucket77";
+const sourceS3Bucket = "legacybucket77"
+const targetObjectPrefix = "avatar/"
+const dbConfig = {
+  host: "100.25.102.220",
+  user: "root",
+  password: 'Ab@123456',
+  database: "userImageData",
+  connectionLimit: connectionLimit,
+  waitForConnections: true, // Default value.
+  queueLimit: 0 // Unlimited - default value.
+};
+
+const redisHost = "100.25.102.220";
+const redisPort = 6379;
+
+var redisParam = {
+  port: redisPort,
+  host: redisHost
+}
+
+var redisParamOffline = {
+  port: redisPort,
+  host: redisHost,
+  enableOfflineQueue: false
+}
+
+const objectQueue = new Queue('objectQueue', {
+  redis: redisParam
+});
+
+const objectQueueChecker = new Queue('objectQueue', {
+  redis: redisParamOffline
+});
+
+objectQueueChecker.count().then(res => {
+
+  if (!res) {
+
+    console.log('objectQueue count is empty :\n');
+
+    console.log('No jobs are pending processing:\n');
+
+  }
+
+  objectQueueChecker.close();
+
+}).catch(err => {
+
+  console.log('Redis server is not running, review it is available on: ' + redisHost + " : " + redisPort);
+
+  objectQueueChecker.close();
+
+  process.exit();
+
+});
+
+const s3CopyObject = util.promisify(s3.copyObject);
 
 videoQueue.process(function(job, done) {
 
@@ -27,42 +72,25 @@ videoQueue.process(function(job, done) {
     Bucket: targetS3Bucket
   };
 
-  // console.log("job data received is "+job.data.bucketObjects);
+  var promiseAll = job.data.bucketObjects.map(eachSourceObject => copyObjectToDestinationBucket(params, eachObjectlist));
 
-  copyObjectToDestinationBucket(params,job.data.bucketObjects);
+  Promise.allSettled(promiseAll).then(function() {
 
+    console.log("All objects pushed to destination bucket");
 
-
-  if (s3CopyFlag) {
-
-    // send update to database
-
-    // updateDatabase()
-
-    // mark job comletion after object has been copied
-
-    // console.log(job.data.bucketObjects + " DONE");
-
-    done();
-
-    if (dbUpdateFlag) {
-
-      // all processes completed
-
-      // updateDatabase()
-
-    }
-
-  }
-
-  // done();
-
-  // console.log(job.data.bucketObjects + " now migrated");
+  });
 
 }).catch(error => console.log(error.message));
 
+objectQueueChecker.on('drained', function() {
+  // Emitted every time the queue has processed all the waiting jobs (even if there can be some delayed jobs not yet processed)
 
-function copyObjectToDestinationBucket(params,sourceObject) {
+  console.log("All jobs in the queue have now been completed.");
+
+});
+
+
+async function copyObjectToDestinationBucket(params, sourceObject) {
 
   try {
 
@@ -70,25 +98,24 @@ function copyObjectToDestinationBucket(params,sourceObject) {
 
     var sourceObjectSplit = sourceObject.split('/');
 
-    // params.Key = targetObjectPrefix + sourceObjectSplit[sourceObjectSplit.length - 1];
-
     params.Key = targetObjectPrefix + sourceObjectSplit[sourceObjectSplit.length - 1];
 
-    // console.log("this is the key value before copy " + params.Key)
+    var s3Response = await s3CopyObject(params).catch(err => {
 
-    s3.copyObject(params, function(err, data) {
+      console.log("Error occured during s3 bucket upload " + err);
 
-      if (err) {
-        console.log(err, err.stack); // an error occurred
-      } else {
-        // successful response
-        s3CopyFlag = true;
-        // console.log(data);
-      }
+      return err;
+
     });
+
+    return s3Response;
+
   } catch (e) {
 
-    console.log("caught exception " + e);
+    console.log("caught exception " + err);
+
+    return err;
 
   }
+
 }
