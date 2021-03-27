@@ -1,7 +1,7 @@
 //this code will write dummy s3 objects to S3 for testing.
 
 //set variabele to hold number of dummy objects to be uploaded.
-var numberOfObjectsToUpload = 30000;
+var numberOfObjectsToUpload = 25;
 
 //set bucket name to upload dummy objects to;
 var bucketName = "legacybucket77";
@@ -11,7 +11,7 @@ var objectBody = "this is a test content for objects to be uploaded";
 // Load the AWS SDK for Node.js
 var AWS = require('aws-sdk');
 // Set the region
-AWS.config.update({region: 'us-east-1'});
+// AWS.config.update({region: 'us-east-1'});
 
 // Create S3 service object
 s3 = new AWS.S3({region: 'us-east-1'});
@@ -31,7 +31,7 @@ debugger;
 // });
 
 
-var path = require('path');
+// var path = require('path');
 
 for (var i = 0; i < numberOfObjectsToUpload; i++) {
 
