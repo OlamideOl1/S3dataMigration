@@ -37,9 +37,7 @@ const objectQueue = new Queue('objectQueue', {
   redis: redisParam
 });
 
-const executionCompleteQueue = new Queue('executionCompleteQueue', {
-  redis: redisParamOffline
-});
+objectQueue.empty().then(res=>objectQueue.clean(1).then(res=>objectQueue.clean(1, 'failed')));
 
 var legacyS3ObjectPrefix = "image";
 var targetObjectPrefix = "avatar/";
