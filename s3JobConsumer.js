@@ -21,7 +21,7 @@ var pushBucket = [];
 var tempObjectList = [];
 
 const dbConfig = {
-  host: "52.87.211.181",
+  host: "34.229.161.96",
   user: "root",
   password: 'Ab@123456',
   database: "userImageData",
@@ -32,7 +32,7 @@ const dbConfig = {
 
 
 
-const redisHost = "52.87.211.181";
+const redisHost = "34.229.161.96";
 const redisPort = 6379;
 
 var startDateTime = new Date();
@@ -60,9 +60,14 @@ const s3CopyObject = (params) => {
   return new Promise((resolve, reject) => {
     s3.copyObject(params, (err, data) => {
       if (err) {
-        return reject(err);
+        console.log("error occured =>" + err.message);
+        // return reject(err);
+        // throw err;
+        reject(err);
+      } else {
+        resolve(data);
       }
-      resolve(data);
+
     });
   });
 }
@@ -108,6 +113,7 @@ objectQueue.process(function(job, done) {
   var promiseAll = job.data.bucketObjects.map(eachSourceObjectList => copyObjectToDestinationBucket(params, eachSourceObjectList));
 
   // console.log("after map = ");
+  // console.log("promise all value "+promiseAll);
 
   Promise.allSettled(promiseAll).then(function() {
 
@@ -121,7 +127,8 @@ objectQueue.process(function(job, done) {
 
       processBatchQuery(batchQuery, pushBucket);
 
-    }else{
+    } else {
+      // console.log("pushBucket list is empty");
       pool.end();
     }
 
@@ -136,21 +143,11 @@ objectQueueChecker.on('drained', function() {
 
   console.log("All jobs in the queue have now been completed.");
 
-  // objectQueueChecker.close();
-
-  // objectQueue.close();
-
 });
 
 async function copyObjectToDestinationBucket(params, eachSourceObjectList) {
 
-  // try {
-
   sourceObject = eachSourceObjectList.oldImagePath;
-
-  // console.log("what was received before s3 call = " + sourceObject);
-
-  sourceObject = sourceObject.replaceAll("'", '');
 
   params = {
     Bucket: targetS3Bucket
@@ -158,14 +155,12 @@ async function copyObjectToDestinationBucket(params, eachSourceObjectList) {
 
   params.CopySource = "/" + sourceS3Bucket + "/" + sourceObject;
 
-  // console.log("copy source is " + params.CopySource);
 
   var sourceObjectSplit = sourceObject.split('/');
 
   params.Key = targetObjectPrefix + sourceObjectSplit[sourceObjectSplit.length - 1];
 
   return s3CopyObject(params).then(function(res) {
-    // console.log("it is populating recs");
 
     tempObjectList = [];
 
@@ -177,28 +172,7 @@ async function copyObjectToDestinationBucket(params, eachSourceObjectList) {
 
     console.log("Error occured during s3 bucket upload " + err);
 
-    // return err;
-
   });
-
-  // console.log("s3Response is " + s3Response);
-
-  // if (s3Response) {
-  //
-  //
-  // }
-
-  // return new Promise((resolve, reject) => { resolve("done")});
-
-  // return s3Response;
-
-  // } catch (e) {
-  //
-  //   console.log("caught exception " + e);
-  //
-  //   return e;
-  //
-  // }
 
 }
 
