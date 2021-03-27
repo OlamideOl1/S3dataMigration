@@ -2,7 +2,6 @@ const mariadb = require('mariadb');
 var Queue = require('bull');
 var timediff = require('timediff');
 
-
 const connectionLimit = 10;
 const databaseHost = "34.229.161.96";
 const dbUser = "root";
