@@ -15,9 +15,8 @@ var dbConfig = {
   password: dbPassword,
   database: databaseName,
   connectionLimit: connectionLimit,
-  // waitForConnections: true, // Default value.
-  // queueLimit: 0 // Unlimited - default value.
 };
+var pool = mariadb.createPool(dbConfig);
 
 const redisHost = "34.229.161.96";
 const redisPort = 6379;
@@ -37,11 +36,18 @@ const objectQueue = new Queue('objectQueue', {
   redis: redisParam
 });
 
-objectQueue.empty().then(res=>objectQueue.clean(1).then(res=>objectQueue.clean(1, 'failed')));
+const objectQueueOffline = new Queue('objectQueue', {
+  redis: redisParamOffline
+});
+
+objectQueueOffline.empty()
+  .then(res => objectQueue.clean(1))
+  .then(res => objectQueue.clean(1, 'failed'))
+  .catch(err => console.log("error occured here " + err.message));
 
 var legacyS3ObjectPrefix = "image";
 var targetObjectPrefix = "avatar/";
-var stageTableforMerge = "stageTableforMerge";
+var stageTableforUpdate = "stageTableforUpdate";
 var databaseTabletoUpdate = "ImageData";
 var tableColumnNametoUpdate = "Imagepath";
 var startDateTime = new Date();
@@ -49,6 +55,10 @@ var targetS3Bucket = "newproductionbucket77";
 var sqlRowLimit = 5000000;
 var maxUploadPerInvocation = 1000000;
 var setRecordsPerBatch = 30000;
+// var sqlRowLimit = 10;
+// var maxUploadPerInvocation = 50;
+// var setRecordsPerBatch = 3;
+
 var s3bulkList = [];
 var allBatchPromiseList = [];
 
@@ -64,15 +74,19 @@ function initiateObjectSelection() {
         console.log("No records selected for migration");
         //send migration completed indicatotr to queue
         objectQueue.add({
-            "migrationcompleted"
-          }).then(res => console.log("add to queue successful"))
+            bucketObjects: "migrationcompleted"
+          }).then(res => console.log("migrationcompleted indicator sent successfully"))
           .catch(error => {
             console.log("add to queue failed see error = " + error.message);
           });
-
         objectQueue.close();
-        pool.end();
-
+        objectQueueOffline.close();
+        pool.query("DROP TABLE IF EXISTS " + stageTableforUpdate)
+          .then(res => pool.end())
+          .catch(err => {
+            console.log("error occured => " + err.message);
+            pool.end();
+          });
       }
     })
     .catch(err => console.log("error occured =>" + err.message));
@@ -82,8 +96,11 @@ function initiateObjectSelection() {
 async function selectFromDB() {
   var s3bulkList = [];
   try {
-    const rows = await pool.query("select " + tableColumnNametoUpdate + " from " + databaseTabletoUpdate + " where " + tableColumnNametoUpdate + " like " + legacyS3ObjectPrefix + "% limit " + sqlRowLimit)
+    const rows = await pool.query("select " + tableColumnNametoUpdate + " from " + databaseTabletoUpdate + " where " + tableColumnNametoUpdate + " like '" + legacyS3ObjectPrefix + "%' limit " + sqlRowLimit)
     s3bulkList = rows.map(element => element[tableColumnNametoUpdate]);
+    if (s3bulkList.length > 0) {
+      var response = await pool.query("CREATE TABLE IF NOT EXISTS " + stageTableforUpdate + " (ID int NOT NULL AUTO_INCREMENT, OldImageName VARCHAR(255), NewImageName VARCHAR(255), PRIMARY KEY (ID))")
+    }
     return s3bulkList;
   } catch (err) {
     throw err;
@@ -149,8 +166,21 @@ function loadS3ObjectstoQueue(s3bulkList, startIndex, endIndex) {
   });
 }
 
+//stageTableforUpdate
+
 objectQueue.on('global:drained', function(jobId, progress) {
-  //Previous batch now complete, check for pending
-  initiateObjectSelection();
-  // videoQueue.close();
+  console.log("now updating database");
+  pool.query("UPDATE " + databaseTabletoUpdate + " t1 INNER JOIN " + stageTableforUpdate + " t2 ON t1." + tableColumnNametoUpdate + " = t2.OldImageName SET t1." + tableColumnNametoUpdate + " = t2.NewImageName")
+    .then((res) => {
+      console.log("response is " + res);
+      console.log("now truncating");
+      return pool.query("TRUNCATE TABLE " + stageTableforUpdate);
+    }).then((res) => {
+      //Previous batch now complete, check for pending
+      initiateObjectSelection();
+    })
+    .catch(err => {
+      //handle error
+      console.log("error occured => " + err.message);
+    });
 });
