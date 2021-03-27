@@ -6,11 +6,14 @@ s3 = new AWS.S3({
   region: 'us-east-1'
 });
 
+// process.env.NODE_ENV
+// var lag = GetEnvironmentVar("NODE_ENV","dev");
 const targetS3Bucket = "newproductionbucket77";
 const sourceS3Bucket = "legacybucket77";
 const targetObjectPrefix = "avatar/";
 var connectionLimit = 10;
 var stageTableforUpdate = "stageTableforUpdate";
+
 var pushBucket = [];
 
 var tempObjectList = [];
@@ -142,4 +145,13 @@ async function processBatchQuery(batchQuery, bulkList) {
     console.log("Batch insert successful, records affected = " + res.affectedRows);
     return res;
   }
+}
+
+function GetEnvironmentVar(varname, defaultvalue)
+{
+    var result = process.env[varname];
+    if(result!=undefined)
+        return result;
+    else
+        return defaultvalue;
 }
