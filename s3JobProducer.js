@@ -5,7 +5,7 @@ var timediff = require('timediff');
 var connectionLimit = 10
 
 var dbConfig = {
-  host: "localhost",
+  host: "34.229.161.96",
   user: "root",
   password: 'Ab@123456',
   database: "userImageData",
@@ -14,7 +14,7 @@ var dbConfig = {
   queueLimit: 0 // Unlimited - default value.
 };
 
-const redisHost = "100.26.144.108";
+const redisHost = "34.229.161.96";
 const redisPort = 6379;
 
 var redisParam = {
@@ -32,6 +32,8 @@ var redisParamOffline = {
   // enableReadyCheck: false,
   // enableOfflineQueue: false
 }
+
+
 
 const objectQueue = new Queue('objectQueue', {
   redis: redisParam
@@ -84,7 +86,7 @@ var s3bulkList = [];
 
 var allBatchPromiseList = [];
 
-for (var i = 0; i < 10000000; i++) {
+for (var i = 0; i < 25; i++) {
 
   var oldImagePath = "image/avatar" + i + ".txt";
 
@@ -112,16 +114,24 @@ function loadS3toQueueDatabase(s3bulkList, startIndex, endIndex) {
 
     eachList = [];
 
+    var s3ObejectforList = {
+      oldImagePath: "",
+      newImagePath: ""
+    }
+
     var oldImagePath = s3bulkList[i];
 
     var sourceObjectSplit = oldImagePath.split('/');
 
     var newImagePath = targetObjectPrefix + sourceObjectSplit[sourceObjectSplit.length - 1];
 
-    eachList.push("'" + oldImagePath + "'");
-    eachList.push("'" + newImagePath + "'");
+    s3ObejectforList.oldImagePath = oldImagePath;
+    s3ObejectforList.newImagePath = newImagePath;
 
-    bulkList.push(eachList);
+    // s3ObejectforList.oldImagePath = "'" + oldImagePath + "'";
+    // s3ObejectforList.newImagePath = "'" + newImagePath + "'";
+
+    bulkList.push(s3ObejectforList);
 
     if (batchCounter == recordsPerBatch || batchCounter == loopEndIndex) {
 
@@ -132,11 +142,13 @@ function loadS3toQueueDatabase(s3bulkList, startIndex, endIndex) {
           console.log("add to queue failed see error = " + error.message);
           // Will now remove last item (failed item) from db batch so it will not get loaded to database
 
-          bulkList.pop(eachList);
+          //bulkList.pop(eachList);
 
         }));
 
-      recordsPerBatch += (( loopEndIndex - i - 1) < setRecordsPerBatch) ? (loopEndIndex - i - 1) : setRecordsPerBatch;
+      //recordsPerBatch = recordsPerBatch + setRecordsPerBatch;
+
+	  recordsPerBatch += (( loopEndIndex - i - 1) < setRecordsPerBatch) ? (loopEndIndex - i - 1) : setRecordsPerBatch;
 
       bulkList = [];
 
