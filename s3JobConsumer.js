@@ -74,29 +74,7 @@ const s3CopyObject = (params) => {
 
 var pool = mariadb.createPool(dbConfig);
 
-objectQueueChecker.count().then(res => {
 
-  if (!res) {
-
-    console.log('objectQueue count is empty :\n');
-
-    console.log('No jobs are pending processing:\n');
-
-  }
-
-  // objectQueueChecker.close();
-
-}).catch(err => {
-
-  console.log('Redis server is not running, review it is available on: ' + redisHost + " : " + redisPort);
-
-  objectQueueChecker.close();
-
-  objectQueue.close();
-
-  // process.exit();
-
-});
 
 objectQueue.process(function(job, done) {
 
@@ -107,6 +85,14 @@ objectQueue.process(function(job, done) {
   var params = {
     Bucket: targetS3Bucket
   };
+
+  if(job.data == "migrationcompleted"){
+    job.retry()
+    objectQueue.close();
+    pool.end();
+    done();
+    process.exit();
+  }
 
   // console.log("before map = " + job.data.bucketObjects);
 
