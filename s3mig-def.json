@@ -1,0 +1,89 @@
+[
+  {
+    "name": "s3jobproducer",
+    "image": "${S3_PRODUCER_IMAGE_URL}",
+    "essential": true,
+    "command": ["node", "s3JobProducer.js"],
+    "logConfiguration": {
+      "logDriver": "awslogs",
+      "Options": {
+        "awslogs-region": "${AWS_REGION}",
+        "awslogs-group": "${LOG_GROUP}",
+        "awslogs-stream-prefix": "${LOG_DEF_NAME}"
+      }
+    },
+    "environment" : [
+      { "name" :"TARGET_S3_BUCKET" , "value" : "${TARGET_S3_BUCKET}" },
+        { "name" :"SOURCE_S3_BUCKET" , "value" : "${SOURCE_S3_BUCKET}" },
+        { "name" :"TARGET_OBJECT_PREFIX" , "value" : "${TARGET_OBJECT_PREFIX}" },
+        { "name" :"TEMP_TABLE_FOR_UPDATE" , "value" : "${TEMP_TABLE_FOR_UPDATE}" },
+        { "name" :"DATABASE_HOST" , "value" : "${DATABASE_HOST}" },
+        { "name" :"DB_USER" , "value" : "${DB_USER}" },
+        { "name" :"DB_PASSWORD" , "value" : "${DB_PASSWORD}" },
+        { "name" :"DATABASE_NAME" , "value" : "${DATABASE_NAME}" },
+        { "name" :"LEGACY_S3_OBJECT_PREFIX" , "value" : "${LEGACY_S3_OBJECT_PREFIX}" },
+        { "name" :"DATABASE_TABLE_TO_UPDATE" , "value" : "${DATABASE_TABLE_TO_UPDATE}" },
+        { "name" :"TABLE_COLUMN_NAME_TO_UPDATE" , "value" : "${TABLE_COLUMN_NAME_TO_UPDATE}" },
+        { "name" :"REDIS_HOST" , "value" : "localhost" },
+        { "name" :"AWS_REGION" , "value" : "${AWS_REGION}" }
+    ],
+    "dependsOn": [
+      {
+        "containerName": "redis",
+        "condition": "START"
+      }
+    ]
+  },
+  {
+    "name": "redis",
+    "image": "redis",
+    "essential": true,
+    "logConfiguration": {
+      "logDriver": "awslogs",
+      "Options": {
+        "awslogs-region": "${AWS_REGION}",
+        "awslogs-group": "${LOG_GROUP}",
+        "awslogs-stream-prefix": "${LOG_DEF_NAME}"
+      }
+    }
+  },
+  {
+    "name": "s3jobconsumer",
+    "image": "${S3_CONSUMER_IMAGE_URL}",
+    "essential": true,
+    "command": ["node", "s3JobConsumer.js"],
+    "environment" : [
+      { "name" : "TARGET_S3_BUCKET" , "value" : "${TARGET_S3_BUCKET}" },
+     { "name" :"SOURCE_S3_BUCKET" , "value" : "${SOURCE_S3_BUCKET}" },
+     { "name" :"TARGET_OBJECT_PREFIX" , "value" : "${TARGET_OBJECT_PREFIX}" },
+     { "name" :"TEMP_TABLE_FOR_UPDATE" , "value" : "${TEMP_TABLE_FOR_UPDATE}" },
+     { "name" :"DATABASE_HOST" , "value" : "${DATABASE_HOST}" },
+     { "name" :"DB_USER" , "value" : "${DB_USER}" },
+     { "name" :"DB_PASSWORD" , "value" : "${DB_PASSWORD}" },
+     { "name" :"DATABASE_NAME" , "value" : "${DATABASE_NAME}" },
+     { "name" :"LEGACY_S3_OBJECT_PREFIX" , "value" : "${LEGACY_S3_OBJECT_PREFIX}" },
+     { "name" :"DATABASE_TABLE_TO_UPDATE" , "value" : "${DATABASE_TABLE_TO_UPDATE}" },
+     { "name" :"TABLE_COLUMN_NAME_TO_UPDATE" , "value" : "${TABLE_COLUMN_NAME_TO_UPDATE}" },
+     { "name" :"REDIS_HOST" , "value" : "localhost" },
+     { "name" :"AWS_REGION" , "value" : "${AWS_REGION}" }
+    ],
+    "dependsOn": [
+      {
+        "containerName": "redis",
+        "condition": "START"
+      },
+      {
+        "containerName": "s3jobproducer",
+        "condition": "START"
+      }
+    ],
+    "logConfiguration": {
+      "logDriver": "awslogs",
+      "Options": {
+        "awslogs-region": "${AWS_REGION}",
+        "awslogs-group": "${LOG_GROUP}",
+        "awslogs-stream-prefix": "${LOG_DEF_NAME}"
+      }
+    }
+  }
+]
