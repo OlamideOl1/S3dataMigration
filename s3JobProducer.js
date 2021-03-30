@@ -1,7 +1,11 @@
+// This program selects images matching a defined prefix from Database and uploads
+// these prefixes are then batched and uploaded to a redis queue for asynchronous processig by a consumer job
+
 const mariadb = require('mariadb');
 var Queue = require('bull');
 var timediff = require('timediff');
 
+// retrive environmental variables
 const databaseHost = GetEnvironmentVar("DATABASE_HOST", "");
 const dbUser = GetEnvironmentVar("DB_USER", "");
 const dbPassword = GetEnvironmentVar("DB_PASSWORD", "");
@@ -15,9 +19,14 @@ const targetS3Bucket = GetEnvironmentVar("TARGET_S3_BUCKET", "");
 const redisHost = GetEnvironmentVar("REDIS_HOST", "");
 
 const redisPort = 6379;
+
+// sql select limit - max number of rows returned by a select statement
 const sqlRowLimit = 5000000;
+// max number of jobs loaded to Queue concurrently
 const maxUploadPerInvocation = 1000000;
+// number of jobs to batch as one in queue
 const setRecordsPerBatch = 30000;
+
 const startDateTime = new Date();
 const connectionLimit = 10;
 
@@ -28,7 +37,20 @@ var dbConfig = {
   database: databaseName,
   connectionLimit: connectionLimit,
 };
-var pool = mariadb.createPool(dbConfig);
+
+//initiate new database connection
+
+let pool;
+try {
+  pool = mariadb.createPool(dbConfig);
+  pool.query("SELECT 1").catch(err => {
+    console.log("Connection to database failed, please review database connection details.");
+    process.exit(1);
+  });
+} catch (err) {
+  console.log("error occured => " + err.message);
+  process.exit(1);
+}
 
 var redisParam = {
   port: redisPort,
@@ -41,18 +63,17 @@ var redisParamOffline = {
   host: redisHost,
 }
 
+//initiate new Queue
 const objectQueue = new Queue('objectQueue', {
   redis: redisParam
 });
 
-// const objectQueueDrain = new Queue('objectQueue', {
-//   redis: redisParamOffline
-// });
-
+//initiate new offline Quee
 const objectQueueOffline = new Queue('objectQueue', {
   redis: redisParamOffline
 });
 
+// Clean queue before starting
 objectQueueOffline.empty()
   .then(res => objectQueue.clean(1))
   .then(res => objectQueue.clean(1, 'failed'))
@@ -62,17 +83,24 @@ objectQueueOffline.empty()
 var s3bulkList = [];
 var allBatchPromiseList = [];
 
-initiateObjectSelection();
+// Start job collection and load to queue
+initiateJobSelection();
 
-function initiateObjectSelection() {
 
+function initiateJobSelection() {
+
+  //call function to select image prefixes to be moved
   selectFromDB()
     .then(res => {
       if (res.length > 0) {
+
+        //if prefixes are found, load them to redis queue
+        console.log("sending object prefixes to queue");
         loadS3ObjectstoQueue(res, 0, res.length);
       } else {
         console.log("No records selected for migration");
-        //send migration completed indicatotr to queue
+
+        //send migration completed indicatotr to queue if no prefixes need to be moved.
         objectQueue.add({
             bucketObjects: "migrationcompleted"
           }).then(res => {
@@ -84,7 +112,10 @@ function initiateObjectSelection() {
           });
 
         pool.query("DROP TABLE IF EXISTS " + tempTableforUpdate)
-          .then(res => pool.end())
+          .then(res => {
+            pool.end();
+            console.log("temp table now dropped");
+          })
           .catch(err => {
             console.log("error occured => " + err.message);
             pool.end();
@@ -96,6 +127,7 @@ function initiateObjectSelection() {
 
 }
 
+// function to select prefixes that need to be moved.
 async function selectFromDB() {
   var s3bulkList = [];
   try {
@@ -103,6 +135,7 @@ async function selectFromDB() {
     s3bulkList = rows.map(element => element[tableColumnNametoUpdate]);
     if (s3bulkList.length > 0) {
       var response = await pool.query("CREATE TABLE IF NOT EXISTS " + tempTableforUpdate + " (ID int NOT NULL AUTO_INCREMENT, OldImageName VARCHAR(255), NewImageName VARCHAR(255), PRIMARY KEY (ID))")
+      console.log("temp table created successfully");
     }
     return s3bulkList;
   } catch (err) {
@@ -111,9 +144,12 @@ async function selectFromDB() {
   }
 }
 
+// function to push prefixes that have to be processed to queue
 function loadS3ObjectstoQueue(s3bulkList, startIndex, endIndex) {
 
+  // number of jobs left to upload to queue is less than maxUploadPerInvocation, then use endIndex, else use maxUploadPerInvocation
   var loopEndIndex = ((endIndex - startIndex) < maxUploadPerInvocation) ? endIndex : (maxUploadPerInvocation + startIndex);
+
   var bulkList = [];
   var recordsPerBatch = setRecordsPerBatch;
   var eachList = [];
@@ -123,14 +159,15 @@ function loadS3ObjectstoQueue(s3bulkList, startIndex, endIndex) {
   for (var i = startIndex; i < loopEndIndex; i++) {
 
     eachList = [];
-
     var s3ObejectforList = {
       oldImagePath: "",
       newImagePath: ""
     }
 
     var oldImagePath = s3bulkList[i];
+    // get actual image name from OldImagepath
     var sourceObjectSplit = oldImagePath.split('/');
+    // construct new image path
     var newImagePath = targetObjectPrefix + sourceObjectSplit[sourceObjectSplit.length - 1];
 
     s3ObejectforList.oldImagePath = oldImagePath;
@@ -139,18 +176,21 @@ function loadS3ObjectstoQueue(s3bulkList, startIndex, endIndex) {
     bulkList.push(s3ObejectforList);
 
     if (batchCounter == recordsPerBatch || batchCounter == loopEndIndex) {
+      // add object holding old and new image names to queue
       allBatchPromiseList.push(objectQueue.add({
           bucketObjects: bulkList
         }).then(res => console.log("add to queue successful"))
         .catch(error => {
           console.log("add to queue failed see error = " + error.message);
         }));
+      //if number of prefixes left to upload to queue is less than size set in setRecordsPerBatch, then upload the remaining prefixes as a batch on their own
       recordsPerBatch += ((loopEndIndex - i - 1) < setRecordsPerBatch) ? (loopEndIndex - i - 1) : setRecordsPerBatch;
       bulkList = [];
     }
     batchCounter++;
   }
 
+  // This promise event will trigger once current batch of queue upload is done. Will trigger next set of batch upload if there are more prefixes to upload.
   Promise.allSettled(allBatchPromiseList).then(function() {
 
     if (loopEndIndex == endIndex) {
@@ -169,18 +209,21 @@ function loadS3ObjectstoQueue(s3bulkList, startIndex, endIndex) {
   });
 }
 
-//tempTableforUpdate
+// This event will trigger once redis queue is empty and all jobs are uploaded. it will initiate query to update production table with the new image prefix for all prefixes
+// that were successfully uploaded by consumer job, reference table for update is => tempTableforUpdate. This table is populated by consumer for every succesful s3ObjectCopy
 
 objectQueue.on('global:drained', function(jobId, progress) {
-  console.log("now updating database");
+  console.log("now updating database with new image prefix");
   pool.query("UPDATE " + databaseTabletoUpdate + " t1 INNER JOIN " + tempTableforUpdate + " t2 ON t1." + tableColumnNametoUpdate + " = t2.OldImageName SET t1." + tableColumnNametoUpdate + " = t2.NewImageName")
     .then((res) => {
       console.log("response is " + res);
       console.log("now truncating");
+
+      // remove prefixes from temp table after update
       return pool.query("TRUNCATE TABLE " + tempTableforUpdate);
     }).then((res) => {
-      //Previous batch now complete, check for pending
-      initiateObjectSelection();
+      //Previous batch now complete, check for pending jobs to be processed and initiate them
+       initiateJobSelection();
     })
     .catch(err => {
       //handle error
@@ -188,6 +231,7 @@ objectQueue.on('global:drained', function(jobId, progress) {
     });
 });
 
+// function to get value of env variable, and check if any is empty.
 function GetEnvironmentVar(varname, defaultvalue) {
   try {
     if (process.env[varname] != undefined) {
