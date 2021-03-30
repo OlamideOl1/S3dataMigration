@@ -3,7 +3,7 @@ var Queue = require('bull');
 
 var cntres = 1;
 
-const redisHost = "34.229.161.96";
+const redisHost = "54.152.26.74";
 const redisPort = 6379;
 
 var redisParam = {

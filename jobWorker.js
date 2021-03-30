@@ -3,7 +3,7 @@ var Queue = require('bull');
 const objectQueue = new Queue('objectQueue', {
   redis: {
     port: 6379,
-    host: "34.229.161.96",
+    host: "54.152.26.74",
     enableOfflineQueue: false
   }
 });
