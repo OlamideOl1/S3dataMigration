@@ -4,7 +4,7 @@
   "description": "migrate s3 objects",
   "main": "s3JobProducer.js",
   "dependencies": {
-    "aws-sdk": "^2.862.0",
+    "aws-sdk": "^2.875.0",
     "bull": "^3.20.1",
     "ioredis": "^4.24.2",
     "mariadb": "^2.5.3",
