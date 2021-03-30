@@ -1,9 +1,8 @@
-
+// This is a program to count number of jobs currently in redis queue
 var Queue = require('bull');
 
-var cntres = 1;
-
-const redisHost = "54.152.26.74";
+// redis connection detaila
+const redisHost = process.env.redisHost;
 const redisPort = 6379;
 
 var redisParam = {
@@ -11,16 +10,24 @@ var redisParam = {
   host: redisHost,
 }
 
-var videoQueue = new Queue('objectQueue', {
-  redis: redisParam
-});
+let objectQueue;
 
-/////////
-videoQueue.getJobCounts().then(res => {
+//initiate new Queue
+try {
+  objectQueue = new Queue('objectQueue', {
+    redis: redisParam
+  });
+} catch (err) {
+  console.log("error occured => " + err.message);
+  process.exit(1);
+}
+
+//check number of jobs in quque
+
+objectQueue.getJobCounts().then(res => {
   console.log('All count variable is :\n', res);
-  videoQueue.close();
+  objectQueue.close();
 }).catch(err => {
-  console.log('Redis server is not running, review it is available on: ' + redisHost + " : " + redisPort);
-  videoQueue.close();
+  console.log('Redis server is not running, confirm it is available on: ' + redisHost + " : " + redisPort);
+  objectQueue.close();
 });
-////////
