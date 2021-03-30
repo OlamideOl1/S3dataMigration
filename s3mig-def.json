@@ -38,6 +38,12 @@
     "name": "redis",
     "image": "redis",
     "essential": true,
+    "healthCheck": {
+        "command": ["CMD", "redis-cli", "ping"],
+        "interval": 5,
+        "retries": 10,
+        "startPeriod": 5
+      },
     "logConfiguration": {
       "logDriver": "awslogs",
       "Options": {
