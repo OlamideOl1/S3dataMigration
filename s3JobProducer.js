@@ -2,11 +2,24 @@ const mariadb = require('mariadb');
 var Queue = require('bull');
 var timediff = require('timediff');
 
+const databaseHost = GetEnvironmentVar("DATABASE_HOST", "");
+const dbUser = GetEnvironmentVar("DB_USER", "");
+const dbPassword = GetEnvironmentVar("DB_PASSWORD", "");
+const databaseName = GetEnvironmentVar("DATABASE_NAME", "");
+const legacyS3ObjectPrefix = GetEnvironmentVar("LEGACY_S3_OBJECT_PREFIX", "");
+const targetObjectPrefix = GetEnvironmentVar("TARGET_OBJECT_PREFIX", "");
+const tempTableforUpdate = GetEnvironmentVar("TEMP_TABLE_FOR_UPDATE", "");
+const databaseTabletoUpdate = GetEnvironmentVar("DATABASE_TABLE_TO_UPDATE", "");
+const tableColumnNametoUpdate = GetEnvironmentVar("TABLE_COLUMN_NAME_TO_UPDATE", "");
+const targetS3Bucket = GetEnvironmentVar("TARGET_S3_BUCKET", "");
+const redisHost = GetEnvironmentVar("REDIS_HOST", "");
+
+const redisPort = 6379;
+const sqlRowLimit = 5000000;
+const maxUploadPerInvocation = 1000000;
+const setRecordsPerBatch = 30000;
+const startDateTime = new Date();
 const connectionLimit = 10;
-const databaseHost = "34.229.161.96";
-const dbUser = "root";
-const dbPassword = 'Ab@123456';
-const databaseName = "userImageData";
 
 var dbConfig = {
   host: databaseHost,
@@ -16,9 +29,6 @@ var dbConfig = {
   connectionLimit: connectionLimit,
 };
 var pool = mariadb.createPool(dbConfig);
-
-const redisHost = "34.229.161.96";
-const redisPort = 6379;
 
 var redisParam = {
   port: redisPort,
@@ -35,6 +45,10 @@ const objectQueue = new Queue('objectQueue', {
   redis: redisParam
 });
 
+// const objectQueueDrain = new Queue('objectQueue', {
+//   redis: redisParamOffline
+// });
+
 const objectQueueOffline = new Queue('objectQueue', {
   redis: redisParamOffline
 });
@@ -42,21 +56,8 @@ const objectQueueOffline = new Queue('objectQueue', {
 objectQueueOffline.empty()
   .then(res => objectQueue.clean(1))
   .then(res => objectQueue.clean(1, 'failed'))
+  .then(res => objectQueueOffline.close())
   .catch(err => console.log("error occured here " + err.message));
-
-var legacyS3ObjectPrefix = "image";
-var targetObjectPrefix = "avatar/";
-var stageTableforUpdate = "stageTableforUpdate";
-var databaseTabletoUpdate = "ImageData";
-var tableColumnNametoUpdate = "Imagepath";
-var startDateTime = new Date();
-var targetS3Bucket = "newproductionbucket77";
-var sqlRowLimit = 5000000;
-var maxUploadPerInvocation = 1000000;
-var setRecordsPerBatch = 30000;
-// var sqlRowLimit = 10;
-// var maxUploadPerInvocation = 50;
-// var setRecordsPerBatch = 3;
 
 var s3bulkList = [];
 var allBatchPromiseList = [];
@@ -74,13 +75,15 @@ function initiateObjectSelection() {
         //send migration completed indicatotr to queue
         objectQueue.add({
             bucketObjects: "migrationcompleted"
-          }).then(res => console.log("migrationcompleted indicator sent successfully"))
+          }).then(res => {
+            console.log("migrationcompleted indicator sent successfully");
+            objectQueue.close();
+          })
           .catch(error => {
             console.log("add to queue failed see error = " + error.message);
           });
-        objectQueue.close();
-        objectQueueOffline.close();
-        pool.query("DROP TABLE IF EXISTS " + stageTableforUpdate)
+
+        pool.query("DROP TABLE IF EXISTS " + tempTableforUpdate)
           .then(res => pool.end())
           .catch(err => {
             console.log("error occured => " + err.message);
@@ -88,6 +91,7 @@ function initiateObjectSelection() {
           });
       }
     })
+    // .then(res => process.exit();)
     .catch(err => console.log("error occured =>" + err.message));
 
 }
@@ -98,7 +102,7 @@ async function selectFromDB() {
     const rows = await pool.query("select " + tableColumnNametoUpdate + " from " + databaseTabletoUpdate + " where " + tableColumnNametoUpdate + " like '" + legacyS3ObjectPrefix + "%' limit " + sqlRowLimit)
     s3bulkList = rows.map(element => element[tableColumnNametoUpdate]);
     if (s3bulkList.length > 0) {
-      var response = await pool.query("CREATE TABLE IF NOT EXISTS " + stageTableforUpdate + " (ID int NOT NULL AUTO_INCREMENT, OldImageName VARCHAR(255), NewImageName VARCHAR(255), PRIMARY KEY (ID))")
+      var response = await pool.query("CREATE TABLE IF NOT EXISTS " + tempTableforUpdate + " (ID int NOT NULL AUTO_INCREMENT, OldImageName VARCHAR(255), NewImageName VARCHAR(255), PRIMARY KEY (ID))")
     }
     return s3bulkList;
   } catch (err) {
@@ -165,15 +169,15 @@ function loadS3ObjectstoQueue(s3bulkList, startIndex, endIndex) {
   });
 }
 
-//stageTableforUpdate
+//tempTableforUpdate
 
 objectQueue.on('global:drained', function(jobId, progress) {
   console.log("now updating database");
-  pool.query("UPDATE " + databaseTabletoUpdate + " t1 INNER JOIN " + stageTableforUpdate + " t2 ON t1." + tableColumnNametoUpdate + " = t2.OldImageName SET t1." + tableColumnNametoUpdate + " = t2.NewImageName")
+  pool.query("UPDATE " + databaseTabletoUpdate + " t1 INNER JOIN " + tempTableforUpdate + " t2 ON t1." + tableColumnNametoUpdate + " = t2.OldImageName SET t1." + tableColumnNametoUpdate + " = t2.NewImageName")
     .then((res) => {
       console.log("response is " + res);
       console.log("now truncating");
-      return pool.query("TRUNCATE TABLE " + stageTableforUpdate);
+      return pool.query("TRUNCATE TABLE " + tempTableforUpdate);
     }).then((res) => {
       //Previous batch now complete, check for pending
       initiateObjectSelection();
@@ -183,3 +187,22 @@ objectQueue.on('global:drained', function(jobId, progress) {
       console.log("error occured => " + err.message);
     });
 });
+
+function GetEnvironmentVar(varname, defaultvalue) {
+  try {
+    if (process.env[varname] != undefined) {
+      var result = process.env[varname];
+      return result.replace(/["]/g, '');
+    } else {
+      if (defaultvalue == "") {
+        console.log("Please set a value for " + varname + " in terraform.tfvars, process will now end gracefully");
+        process.exit();
+      }
+      return defaultvalue;
+    }
+  } catch (err) {
+    console.log("error occured =>" + err.message);
+    console.log("Please set a right value for " + varname + " in terraform.tfvars, process will now end gracefully");
+    process.exit();
+  }
+}
