@@ -3,33 +3,33 @@ const Queue = require('bull');
 const AWS = require('aws-sdk');
 
 s3 = new AWS.S3({
-  region: 'us-east-1'
+  region: GetEnvironmentVar("AWS_REGION", 'us-east-1')
 });
 
-// process.env.NODE_ENV
-// var lag = GetEnvironmentVar("NODE_ENV","dev");
-const targetS3Bucket = "newproductionbucket77";
-const sourceS3Bucket = "legacybucket77";
-const targetObjectPrefix = "avatar/";
-var connectionLimit = 10;
-var stageTableforUpdate = "stageTableforUpdate";
+const targetS3Bucket = GetEnvironmentVar("TARGET_S3_BUCKET", "");
+const sourceS3Bucket = GetEnvironmentVar("SOURCE_S3_BUCKET", "");
+const targetObjectPrefix = GetEnvironmentVar("TARGET_OBJECT_PREFIX", "");
+const tempTableforUpdate = GetEnvironmentVar("TEMP_TABLE_FOR_UPDATE", "");
+const databaseHost = GetEnvironmentVar("DATABASE_HOST", "");
+const dbUser = GetEnvironmentVar("DB_USER", "");
+const dbPassword = GetEnvironmentVar("DB_PASSWORD", "");
+const databaseName = GetEnvironmentVar("DATABASE_NAME", "");
+const redisHost = GetEnvironmentVar("REDIS_HOST", "");
 
+const redisPort = 6379;
+const connectionLimit = 10;
 var pushBucket = [];
-
 var tempObjectList = [];
 
 const dbConfig = {
-  host: "34.229.161.96",
-  user: "root",
-  password: 'Ab@123456',
-  database: "userImageData",
+  host: databaseHost,
+  user: dbUser,
+  password: dbPassword,
+  database: databaseName,
   connectionLimit: connectionLimit,
-  waitForConnections: true, // Default value.
-  queueLimit: 0 // Unlimited - default value.
 };
 
-const redisHost = "34.229.161.96";
-const redisPort = 6379;
+
 
 var redisParam = {
   port: redisPort,
@@ -59,9 +59,10 @@ const s3CopyObject = (params) => {
   });
 }
 
+var pool = mariadb.createPool(dbConfig);
+
 objectQueue.process(function(job, done) {
 
-  var pool = mariadb.createPool(dbConfig);
   pushBucket = [];
   startDateTime = new Date();
   var params = {
@@ -89,20 +90,17 @@ objectQueue.process(function(job, done) {
   Promise.allSettled(promiseAll).then(function() {
 
     console.log("All objects pushed to destination bucket");
-    batchQuery = "INSERT INTO " + stageTableforUpdate + " (OldImageName,NewImageName) values (?, ?)";
+    batchQuery = "INSERT INTO " + tempTableforUpdate + " (OldImageName,NewImageName) values (?, ?)";
 
     if (pushBucket.length > 0) {
       processBatchQuery(batchQuery, pushBucket).then(function(res) {
         done();
-        pool.end();
       });
     } else {
-      pool.end();
       done();
     }
   });
 }).catch(error => console.log("Error occured, have a look " + error.message));
-
 
 async function copyObjectToDestinationBucket(params, eachSourceObjectList) {
 
@@ -147,11 +145,21 @@ async function processBatchQuery(batchQuery, bulkList) {
   }
 }
 
-function GetEnvironmentVar(varname, defaultvalue)
-{
-    var result = process.env[varname];
-    if(result!=undefined)
-        return result;
-    else
-        return defaultvalue;
+function GetEnvironmentVar(varname, defaultvalue) {
+  try {
+    if (process.env[varname] != undefined) {
+      var result = process.env[varname];
+      return result.replace(/["]/g, '');
+    } else {
+      if (defaultvalue == "") {
+        console.log("Please set a value for " + varname + " in terraform.tfvars, process will now end gracefully");
+        process.exit();
+      }
+      return defaultvalue;
+    }
+  } catch (err) {
+    console.log("error occured =>" + err.message);
+    console.log("Please set a right value for " + varname + " in terraform.tfvars, process will now end gracefully");
+    process.exit();
+  }
 }
