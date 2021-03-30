@@ -1,11 +1,28 @@
-debugger;
-
-
+// This is a program to flush all jobs in a provided queue
 
 var Queue = require('bull');
 
-var videoQueue = new Queue('objectQueue', 'redis://54.152.26.74');
+// redis connection detaila
+const redisHost = process.env.redisHost;
+const redisPort = 6379;
 
-videoQueue.empty().then(res=>videoQueue.clean(1).then(res=>videoQueue.clean(1, 'failed').then(res=>videoQueue.close())));
+var redisParam = {
+  port: redisPort,
+  host: redisHost
+}
 
-// videoQueue.close();
+//initiate new Quee
+
+try {
+
+  var objectQueue = new Queue('objectQueue', {
+    redis: redisParam
+  });
+
+  objectQueue.empty().then(res => objectQueue.clean(1).then(res => objectQueue.clean(1, 'failed').then(res => objectQueue.close())));
+
+} catch (err) {
+  console.log("error occured => " + err.mesage);
+}
+
+// objectQueue.close();
