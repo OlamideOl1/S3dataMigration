@@ -1,2 +1,14 @@
 **/node_modules
 **/test
+.terraform
+.git
+.terraform.lock.hcl
+terraform.tfstate
+.terraform.tfstate.lock.info
+s3MigAccessKeyID.txt
+s3MigSecretAccessKey.txt
+terraform.tfstate.backup
+dockerEnvFile
+lambdaTask
+terraform.tfstate.d
+ecsDeployment
