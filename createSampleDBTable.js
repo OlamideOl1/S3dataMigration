@@ -1,47 +1,48 @@
-var numberOfObjectsToUpload = 100;
+// This is a program to Create a sample table to mimicking the production table in the provided task
+// This program will also upload sample legacy image paths to the table
 
-var bucketName = "legacybucket77";
+
+//number of sample images to upload
+var numberOfObjectsToUpload = 100;
 
 const mariadb = require('mariadb');
 
-var pool = mariadb.createPool({
-  host: "54.152.26.74",
-  user: "root",
-  password: 'Ab@123456',
-  database: "userImageData",
-  connectionLimit: 10
-});
+let pool;
+
+try {
+  pool = mariadb.createPool({
+    host: process.env.dbHost,
+    user: process.env.dbUser,
+    password: process.env.password,
+    database: process.env.database,
+    connectionLimit: 10
+  });
+  pool.query("SELECT 1").catch(err => {
+    console.log("Connection to database failed, please review database connection details.");
+    process.exit(1);
+  });
+} catch (err) {
+  console.log("error occured => " + err.message);
+  process.exit(1);
+}
+
+// Name of sample table to use
 var tableName = "ImageData";
+
+// Name of column in sample table to use
 var tableColumnName = "Imagepath";
-
-// Load the AWS SDK for Node.js
-var AWS = require('aws-sdk');
-// Set the region
-AWS.config.update({
-  region: 'us-east-1'
-});
-
-// Create S3 service object
-s3 = new AWS.S3({
-  region: 'us-east-1'
-});
-
-// var file = process.argv[3];
-
-var path = require('path');
 
 var pushList = [];
 
 for (var i = 0; i < numberOfObjectsToUpload; i++) {
-
-  pushList.push("image/avatar" + i + ".txt");
-
+  pushList.push("image/avatar" + i + ".jpg");
 }
 
 var objectUpdateQuery = "INSERT INTO " + tableName + "(" + tableColumnName + ") VALUES (?)";
 
 pool.query("CREATE TABLE IF NOT EXISTS " + tableName + " (ID int NOT NULL AUTO_INCREMENT , " + tableColumnName + " VARCHAR(255) , PRIMARY KEY (ID))")
   .then(res => {
+    // Bulk insert objects to sample table
     return pool.batch(objectUpdateQuery, pushList);
   })
   .then(res => {
@@ -49,5 +50,3 @@ pool.query("CREATE TABLE IF NOT EXISTS " + tableName + " (ID int NOT NULL AUTO_I
     pool.end();
   })
   .catch(err => console.log("error occured " + err.message))
-
-// insertTableData(pushList);
