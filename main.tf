@@ -1,12 +1,12 @@
 #####################################################################################################
-## This is a terraform provisioning template to Provision and ECS tasks from the containers defined 
+## This is a terraform provisioning template to Provision and ECS tasks from the containers defined
 ## in the container definition json file named s3mig-def.json found in the root directory of this file.
 ##
-## All variables used in this template document have been provided in the terraform.tfvars 
+## All variables used in this template document have been provided in the terraform.tfvars
 ## file in the root directory of this file
 ##
 ## A lambda function is also triggered to diable cloudwatch event rule after tasks have been
-## successfully triggered. This enables tasks to be automatically triggered while ensuring they are 
+## successfully triggered. This enables tasks to be automatically triggered while ensuring they are
 ## run just once.
 #####################################################################################################
 
@@ -69,6 +69,15 @@ resource "aws_security_group" "ecs_task" {
   }
 }
 
+resource "aws_internet_gateway" "ig" {
+  vpc_id = aws_vpc.main.id
+}
+
+resource "aws_route" "default_route" {
+  route_table_id         = aws_vpc.main.default_route_table_id
+  destination_cidr_block = "0.0.0.0/0"
+  gateway_id             = aws_internet_gateway.ig.id
+}
 
 # Create cloud watch log group to attach to container definition and store events raised by containers
 
@@ -129,7 +138,7 @@ resource "aws_iam_role_policy_attachment" "ecs-task-execution-role-policy-attach
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# Create IAM role to be used by each task i.e the containers and attach relevant policies to the ecs task role. 
+# Create IAM role to be used by each task i.e the containers and attach relevant policies to the ecs task role.
 # This role also enables the containers access the relevant S3 buckets for migration.
 
 resource "aws_iam_role" "ecs_task_role" {
@@ -150,7 +159,7 @@ resource "aws_iam_role" "ecs_task_role" {
 }
 EOF
 }
- 
+
 resource "aws_iam_policy" "ecs_task_role_policy" {
   name = "ecs_task_role_policy"
   description = "IAM Policy for ecs task operation"
@@ -325,7 +334,7 @@ resource "aws_cloudwatch_event_target" "scheduled_task" {
     launch_type         = local.launch_type
     network_configuration {
       subnets          = data.aws_subnet_ids.subnet.ids
-      assign_public_ip = false
+      assign_public_ip = true
       security_groups  = [aws_security_group.ecs_task.id]
     }
   }
@@ -366,4 +375,3 @@ resource "aws_lambda_permission" "allow_cloudwatch" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.scheduled_task.arn
 }
-
