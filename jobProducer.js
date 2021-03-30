@@ -1,41 +1,50 @@
-debugger;
-
+//This is a program to push sample jobs to redis queue to test queue operation
 
 var Queue = require('bull');
 
-// const Redis = require('ioredis')
-//
-// const redis = new Redis({
-//   port: 6379,
-//   host: '52.86.55.47'
-// })
+// redis connection detaila
+const redisHost = process.env.redisHost;
+const redisPort = 6379;
 
-// const objectQueue = new Queue('video transcoder', 'redis://52.86.55.47:6379');
+//number of jobs to upload
+const numberOfJobsUpload = 10;
 
-const objectQueue = new Queue('objectQueue', {
-  redis: {
-    port: 6379,
-    host: "54.152.26.74",
-    // maxRetriesPerRequest: null,
-    // enableReadyCheck: false,
-    enableOfflineQueue: false
-  }
-});
+var redisParam = {
+  port: redisPort,
+  host: redisHost,
+  enableOfflineQueue: false
+}
 
-var objectQueue = new Queue('objectQueue', 'redis://52.86.55.47:6379');
+let objectQueue;
 
-for (var x = 0;x<10;x++){
+//initiate new Quee
+try {
+  objectQueue = new Queue('objectQueue', {
+    redis: redisParam
+  });
+} catch (err) {
+  console.log("error occured => " + err.message);
+  process.exit(1);
+}
 
-// objectQueue.add({video: 'http://example.com/video1.mov'}, { removeOnComplete: true }).then(res=>{
-objectQueue.add({video: 'http://example.com/video1.mov'}).then(res=>{
-  console.log("job added");
-}).catch(error => {
-  console.log(error.message);
-});
+//upload jobs to objectQueue queue
+for (var x = 0; x < numberOfJobsUpload; x++) {
+
+  objectQueue.add({
+    objectQueue: 'sample job upload content'
+  }).then(res => {
+    console.log("job added");
+    objectQueue.close();
+  }).catch(error => {
+    console.log(error.message);
+    objectQueue.close();
+  });
 
 }
 
-objectQueue.on('global:drained', function(jobId, progress) {
-  console.log("now global drained")
 
-});
+
+// objectQueue.on('global:drained', function(jobId, progress) {
+//   console.log("now global drained")
+//
+// });
