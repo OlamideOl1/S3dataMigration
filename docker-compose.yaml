@@ -5,6 +5,11 @@ services:
     hostname: redis
     env_file:
     - terraform.tfvars
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 6
   s3jobproducer:
     build:
       context: ./
@@ -13,10 +18,9 @@ services:
     command: ["node", "s3JobProducer.js"]
     hostname: s3jobproducer
     environment:
-      REDIS_HOST: "54.152.26.74"
+      REDIS_HOST: redis
     depends_on:
       - redis
-      - mariadb
     hostname: s3jobproducer
     env_file:
     - terraform.tfvars
@@ -27,10 +31,9 @@ services:
     image: s3jobconsumer
     command: ["node", "s3JobConsumer.js"]
     environment:
-      REDIS_HOST: "54.152.26.74"
+      REDIS_HOST: redis
     depends_on:
       - redis
-      - mariadb
       - s3jobproducer
     deploy:
       replicas: 1
