@@ -18,6 +18,28 @@ data "aws_subnet_ids" "subnet" {
   ]
 }
 
+data "template_file" "s3mig" {
+  template = file("${path.module}/s3mig-def.json")
+  vars = {
+    TARGET_S3_BUCKET = var.TARGET_S3_BUCKET
+    SOURCE_S3_BUCKET = var.SOURCE_S3_BUCKET
+    TARGET_OBJECT_PREFIX = var.TARGET_OBJECT_PREFIX
+    TEMP_TABLE_FOR_UPDATE = var.TEMP_TABLE_FOR_UPDATE
+    DATABASE_HOST = var.DATABASE_HOST
+    DB_USER = var.DB_USER
+    DB_PASSWORD = var.DB_PASSWORD
+    DATABASE_NAME = var.DATABASE_NAME
+    LEGACY_S3_OBJECT_PREFIX = var.LEGACY_S3_OBJECT_PREFIX
+    DATABASE_TABLE_TO_UPDATE = var.DATABASE_TABLE_TO_UPDATE
+    TABLE_COLUMN_NAME_TO_UPDATE = var.TABLE_COLUMN_NAME_TO_UPDATE
+    AWS_REGION = var.AWS_REGION
+    S3_PRODUCER_IMAGE_URL = data.aws_ecr_repository.s3JobProducer.repository_url
+    S3_CONSUMER_IMAGE_URL = data.aws_ecr_repository.s3JobConsumer.repository_url
+    LOG_GROUP = aws_cloudwatch_log_group.s3Mig.name
+    LOG_DEF_NAME = local.service_name
+  }
+}
+
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
 }
@@ -235,28 +257,6 @@ resource "aws_iam_role_policy_attachment" "ecs_events_run_task" {
 
 resource "aws_ecs_cluster" "cluster" {
   name = "${local.service_name}-cluster"
-}
-
-data "template_file" "s3mig" {
-  template = file("${path.module}/s3mig-def.json")
-  vars = {
-    TARGET_S3_BUCKET = var.TARGET_S3_BUCKET
-    SOURCE_S3_BUCKET = var.SOURCE_S3_BUCKET
-    TARGET_OBJECT_PREFIX = var.TARGET_OBJECT_PREFIX
-    TEMP_TABLE_FOR_UPDATE = var.TEMP_TABLE_FOR_UPDATE
-    DATABASE_HOST = var.DATABASE_HOST
-    DB_USER = var.DB_USER
-    DB_PASSWORD = var.DB_PASSWORD
-    DATABASE_NAME = var.DATABASE_NAME
-    LEGACY_S3_OBJECT_PREFIX = var.LEGACY_S3_OBJECT_PREFIX
-    DATABASE_TABLE_TO_UPDATE = var.DATABASE_TABLE_TO_UPDATE
-    TABLE_COLUMN_NAME_TO_UPDATE = var.TABLE_COLUMN_NAME_TO_UPDATE
-    AWS_REGION = var.AWS_REGION
-    S3_PRODUCER_IMAGE_URL = data.aws_ecr_repository.s3JobProducer.repository_url
-    S3_CONSUMER_IMAGE_URL = data.aws_ecr_repository.s3JobConsumer.repository_url
-    LOG_GROUP = aws_cloudwatch_log_group.s3Mig.name
-    LOG_DEF_NAME = local.service_name
-  }
 }
 
 resource "aws_ecs_task_definition" "definition" {
