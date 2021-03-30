@@ -1,0 +1,39 @@
+version: '3.8'
+services:
+  redis:
+    image: redis
+    hostname: redis
+    env_file:
+    - terraform.tfvars
+  s3jobproducer:
+    build:
+      context: ./
+      target: s3Producer
+    image: s3jobproducer
+    command: ["node", "s3JobProducer.js"]
+    hostname: s3jobproducer
+    environment:
+      REDIS_HOST: "54.152.26.74"
+    depends_on:
+      - redis
+      - mariadb
+    hostname: s3jobproducer
+    env_file:
+    - terraform.tfvars
+  s3jobconsumer:
+    build:
+      context: ./
+      target: s3Consumer
+    image: s3jobconsumer
+    command: ["node", "s3JobConsumer.js"]
+    environment:
+      REDIS_HOST: "54.152.26.74"
+    depends_on:
+      - redis
+      - mariadb
+      - s3jobproducer
+    deploy:
+      replicas: 1
+    hostname: s3jobconsumer
+    env_file:
+    - terraform.tfvars
