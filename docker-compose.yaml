@@ -17,6 +17,11 @@ services:
     image: s3jobproducer
     command: ["node", "s3JobProducer.js"]
     hostname: s3jobproducer
+    healthcheck:
+      test: ["CMD", "ping", "localhost","-c","1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
     environment:
       REDIS_HOST: redis
     depends_on:
