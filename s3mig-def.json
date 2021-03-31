@@ -3,6 +3,12 @@
     "name": "s3jobproducer",
     "image": "${S3_PRODUCER_IMAGE_URL}",
     "essential": true,
+    "healthCheck": {
+        "command": ["CMD", "ping", "localhost","-c","1"],
+        "interval": 10,
+        "retries": 10,
+        "startPeriod": 20
+      },
     "command": ["node", "s3JobProducer.js"],
     "logConfiguration": {
       "logDriver": "awslogs",
@@ -30,13 +36,14 @@
     "dependsOn": [
       {
         "containerName": "redis",
-        "condition": "START"
+        "condition": "HEALTHY"
       }
     ]
   },
   {
     "name": "redis",
     "image": "redis",
+    "command" : ["redis-server", "--appendonly", "yes"],
     "essential": true,
     "healthCheck": {
         "command": ["CMD", "redis-cli", "ping"],
@@ -51,12 +58,39 @@
         "awslogs-group": "${LOG_GROUP}",
         "awslogs-stream-prefix": "${LOG_DEF_NAME}"
       }
-    }
+    },
+    "mountPoints": [
+                {
+                    "sourceVolume": "task-efs",
+                    "containerPath": "/data",
+                    "readOnly": false
+                }
+            ],
+            "portMappings": [
+        {
+          "hostPort": 6379,
+          "protocol": "tcp",
+          "containerPort": 6379
+        }
+      ],
+      "ulimits": [
+        {
+          "softLimit": 20000,
+          "hardLimit": 20000,
+          "name": "nofile"
+        }
+      ]
   },
   {
     "name": "s3jobconsumer",
     "image": "${S3_CONSUMER_IMAGE_URL}",
     "essential": true,
+    "healthCheck": {
+        "command": ["CMD", "ping", "localhost","-c","1"],
+        "interval": 10,
+        "retries": 10,
+        "startPeriod": 20
+      },
     "command": ["node", "s3JobConsumer.js"],
     "environment" : [
       { "name" : "TARGET_S3_BUCKET" , "value" : "${TARGET_S3_BUCKET}" },
@@ -76,7 +110,7 @@
     "dependsOn": [
       {
         "containerName": "redis",
-        "condition": "START"
+        "condition": "HEALTHY"
       },
       {
         "containerName": "s3jobproducer",
