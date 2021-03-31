@@ -8,6 +8,8 @@
 ## A lambda function is also triggered to diable cloudwatch event rule after tasks have been
 ## successfully triggered. This enables tasks to be automatically triggered while ensuring they are
 ## run just once.
+##
+## The redis queue has also been mounted on an efs storage to keep queue data persistent after container restart.
 #####################################################################################################
 
 
@@ -35,6 +37,8 @@ data "aws_ecr_repository" "s3JobConsumer" {
 
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
+  enable_dns_support = true
+  enable_dns_hostnames = true
 }
 
 resource "aws_subnet" "main" {
@@ -57,11 +61,18 @@ resource "aws_security_group" "ecs_task" {
   name        = "s3MigVPC"
   vpc_id      = aws_vpc.main.id
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+  ingress {
+  from_port       = 2049
+  to_port         = 2049
+  protocol        = "tcp"
+  cidr_blocks     = [aws_vpc.main.cidr_block]
+}
+
+   egress {
+    from_port       = 0
+    to_port         = 0
+    protocol        = "-1"
+    cidr_blocks     = ["0.0.0.0/0"]
   }
 
   tags = {
@@ -297,6 +308,8 @@ resource "aws_ecs_cluster" "cluster" {
 }
 
 # Creat ecs task definition using container definition template retrieved earlier.
+# This task also has support for efs. EFS has been mounted on the redis container
+# The redis container will now persist data to the efs storage.
 
 resource "aws_ecs_task_definition" "definition" {
   family                   = "${local.service_name}-task-definition"
@@ -307,6 +320,19 @@ resource "aws_ecs_task_definition" "definition" {
   network_mode             = "awsvpc"
   cpu                      = local.cpu
   memory                   = local.memory
+  volume {
+    name = "task-efs"
+
+    efs_volume_configuration {
+      file_system_id          = aws_efs_file_system.fs.id
+      authorization_config {
+          iam = null
+          access_point_id  = null
+        }
+        transit_encryption = "ENABLED"
+      root_directory  = "/opt/data"
+    }
+  }
 }
 
 # Creat cloudwatch event rule to trigger every minute
@@ -374,4 +400,84 @@ resource "aws_lambda_permission" "allow_cloudwatch" {
   function_name = aws_lambda_function.lambda_event_run_task.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.scheduled_task.arn
+}
+
+
+# EFS Related Configuration are placed below.
+
+resource "aws_efs_file_system" "fs" {
+  creation_token = "task-efs"
+  encrypted = false
+  throughput_mode = "bursting"
+  performance_mode = "generalPurpose"
+  tags = {
+    Name = "task_fs"
+  }
+}
+
+# Degine Policy for using efs storage
+
+resource "aws_efs_file_system_policy" "policy" {
+  file_system_id = aws_efs_file_system.fs.id
+
+  policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Id": "ExamplePolicy01",
+    "Statement": [
+        {
+            "Sid": "ExampleStatement01",
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "*"
+            },
+            "Resource": "${aws_efs_file_system.fs.arn}",
+            "Action": [
+                "elasticfilesystem:ClientMount",
+                "elasticfilesystem:ClientWrite",
+                "elasticfilesystem:ClientRootAccess"
+            ],
+            "Condition": {
+                "Bool": {
+                    "aws:SecureTransport": "true"
+                }
+            }
+        }
+    ]
+}
+POLICY
+}
+
+# Create efs mount target
+
+resource "aws_efs_mount_target" "task" {
+  file_system_id = aws_efs_file_system.fs.id
+  subnet_id      = aws_subnet.main.id
+  security_groups = [aws_security_group.ecs_task.id]
+}
+
+
+# Create efs security group
+
+resource "aws_security_group" "efs" {
+  name        = "efs"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+          description = "nfs"
+          from_port = 2049
+          to_port = 2049
+          protocol = "tcp"
+          cidr_blocks = [aws_vpc.main.cidr_block]
+      }
+
+    egress {
+     from_port       = 0
+     to_port         = 0
+     protocol        = "-1"
+     cidr_blocks     = ["0.0.0.0/0"]
+   }
+  tags = {
+    Name = "efs_sg"
+  }
 }
