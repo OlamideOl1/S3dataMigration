@@ -5,7 +5,7 @@
 ## All variables used in this template document have been provided in the terraform.tfvars
 ## file in the root directory of this file
 ##
-## A lambda function is also triggered to diable cloudwatch event rule after tasks have been
+## A lambda function is also triggered to disable cloudwatch event rule after tasks have been
 ## successfully triggered. This enables tasks to be automatically triggered while ensuring they are
 ## run just once.
 ##
