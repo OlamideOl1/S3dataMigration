@@ -17,8 +17,8 @@
 locals {
   service_name = "s3Mig"
   launch_type = "FARGATE"
-  cpu = "512"
-  memory = "1024"
+  cpu = "1024"
+  memory = "4096"
 }
 
 
