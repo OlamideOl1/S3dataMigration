@@ -14,7 +14,7 @@ LEGACY_S3_OBJECT_PREFIX=""
 # Image prefix to be used in target bucket.    Example: "avatar/"
 TARGET_OBJECT_PREFIX=""
 # A temporary table to be used for this migration. Should be a table name does not already exist. A default value has been provided.
-TEMP_TABLE_FOR_UPDATE=""
+TEMP_TABLE_FOR_UPDATE="tempTableforUpdate"
 # Database host detail.     Example: "54.55.44.33"
 DATABASE_HOST=""
 # Database user to be used for migration operation.     Example: "root"
@@ -28,7 +28,7 @@ DATABASE_TABLE_TO_UPDATE=""
 # Name of Column in the provided database table contains the image prefixes to be updated.     Example: "ImagePath"
 TABLE_COLUMN_NAME_TO_UPDATE=""
 # Default AWS Region to use for migration. A default value has been provided.
-AWS_REGION=""
+AWS_REGION="us-east-1"
 
 # Please Note!
 # The AWS Access key details below should only be provided when using the local / docker-compse deployment option.
