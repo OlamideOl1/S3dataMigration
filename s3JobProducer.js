@@ -110,8 +110,6 @@ const objectQueue = new Queue('objectQueue', {
   redis: redisParam
 });
 
-
-
 var s3bulkList = [];
 var allBatchPromiseList = [];
 
@@ -132,6 +130,7 @@ function initiateJobSelection() {
       } else {
         console.log("No records selected for migration");
 
+        // Drop temp table that was created
         pool.query("DROP TABLE IF EXISTS " + tempTableforUpdate)
           .then(res => {
             pool.end();
@@ -142,9 +141,9 @@ function initiateJobSelection() {
             pool.end();
           });
 
-
         if (consumerServiceName != "dockercompose") {
 
+          // if service is running in ECS
           console.log("migration completed, now setting consumer service task count to 0");
 
           var consumerParams = {
@@ -162,6 +161,7 @@ function initiateJobSelection() {
               service: producerServiceName,
               cluster: clusterName
             };
+
             // Now set task count to 0 for ecs consumer service
             return ecsUpdateService(producerParams).catch(function(err) {
               console.log("error occured while setting producer task count to 0 => " + err.message);
@@ -187,7 +187,7 @@ function initiateJobSelection() {
             }).then(res => {
               console.log("migrationcompleted indicator sent successfully");
 
-                objectQueue.close();
+              objectQueue.close();
 
             })
             .catch(error => {

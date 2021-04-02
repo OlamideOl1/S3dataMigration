@@ -24,7 +24,7 @@ const redisHost = GetEnvironmentVar("REDIS_HOST", "");
 const consumerServiceName = GetEnvironmentVar("CONSUMER_SERVICE_NAME", "dockercompose");
 const producerServiceName = GetEnvironmentVar("PRODUCER_SERVICE_NAME", "dockercompose");
 
-
+// Check where service is running, Dockercompose or AWS ECS
 if (producerServiceName == "dockercompose") {
   console.log("Service is running in docker-compose");
 
@@ -174,10 +174,12 @@ async function copyObjectToDestinationBucket(params, eachSourceObjectList) {
     Bucket: targetS3Bucket
   };
 
+ // check if provided prefix has slash, else add it
   if (targetObjectPrefix.slice(-1) != '/') {
     targetObjectPrefix = targetObjectPrefix + '/';
   }
 
+// generate new object prefix to be used during S3 upload to target bucket
   params.CopySource = "/" + sourceS3Bucket + "/" + sourceObject;
   var sourceObjectSplit = sourceObject.split('/');
   params.Key = targetObjectPrefix + sourceObjectSplit[sourceObjectSplit.length - 1];
