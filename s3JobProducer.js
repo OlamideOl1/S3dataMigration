@@ -1,9 +1,15 @@
 // This program selects images matching a defined prefix from Database and uploads
 // these prefixes are then batched and uploaded to a redis queue for asynchronous processig by a consumer job
 
+const AWS = require('aws-sdk');
 const mariadb = require('mariadb');
 var Queue = require('bull');
 var timediff = require('timediff');
+
+var ecs = new AWS.ECS({
+  region: GetEnvironmentVar("AWS_REGION", 'us-east-1'),
+  apiVersion: '2014-11-13'
+});
 
 // retrive environmental variables
 const databaseHost = GetEnvironmentVar("DATABASE_HOST", "");
@@ -17,6 +23,12 @@ const databaseTabletoUpdate = GetEnvironmentVar("DATABASE_TABLE_TO_UPDATE", "");
 const tableColumnNametoUpdate = GetEnvironmentVar("TABLE_COLUMN_NAME_TO_UPDATE", "");
 const targetS3Bucket = GetEnvironmentVar("TARGET_S3_BUCKET", "");
 const redisHost = GetEnvironmentVar("REDIS_HOST", "");
+
+// The environmental variables below are set by terraform ONLY when running in ECS mode
+const consumerServiceName = GetEnvironmentVar("CONSUMER_SERVICE_NAME", "dockercompose");
+const producerServiceName = GetEnvironmentVar("PRODUCER_SERVICE_NAME", "dockercompose");
+const clusterName = GetEnvironmentVar("CLUSTER_NAME", "dockercompose");
+
 
 const redisPort = 6379;
 
@@ -38,6 +50,41 @@ var dbConfig = {
   connectionLimit: connectionLimit,
 };
 
+var redisParamOffline = {
+  port: redisPort,
+  host: redisHost,
+}
+
+//initiate new offline Quee
+const objectQueueOffline = new Queue('objectQueue', {
+  redis: redisParamOffline
+});
+
+// Clean queue before starting
+objectQueueOffline.empty()
+  .then(res => objectQueue.clean(1))
+  .then(res => objectQueue.clean(1, 'failed'))
+  .then(res => objectQueueOffline.close())
+  .catch(err => console.log("error occured here " + err.message));
+
+// Promisify the ecs updateService method.
+// Thereby converting the method from Callback response to Promise response.
+
+const ecsUpdateService = (params) => {
+  return new Promise((resolve, reject) => {
+    ecs.updateService(params, (err, data) => {
+      if (err) {
+        console.log("error occured =>" + err.message);
+        // return reject(err);
+        // throw err;
+        reject(err);
+      } else {
+        resolve(data);
+      }
+    });
+  });
+}
+
 //initiate new database connection
 
 let pool;
@@ -58,27 +105,12 @@ var redisParam = {
   enableOfflineQueue: false
 }
 
-var redisParamOffline = {
-  port: redisPort,
-  host: redisHost,
-}
-
 //initiate new Queue
 const objectQueue = new Queue('objectQueue', {
   redis: redisParam
 });
 
-//initiate new offline Quee
-const objectQueueOffline = new Queue('objectQueue', {
-  redis: redisParamOffline
-});
 
-// Clean queue before starting
-objectQueueOffline.empty()
-  .then(res => objectQueue.clean(1))
-  .then(res => objectQueue.clean(1, 'failed'))
-  .then(res => objectQueueOffline.close())
-  .catch(err => console.log("error occured here " + err.message));
 
 var s3bulkList = [];
 var allBatchPromiseList = [];
@@ -100,17 +132,6 @@ function initiateJobSelection() {
       } else {
         console.log("No records selected for migration");
 
-        //send migration completed indicatotr to queue if no prefixes need to be moved.
-        objectQueue.add({
-            bucketObjects: "migrationcompleted"
-          }).then(res => {
-            console.log("migrationcompleted indicator sent successfully");
-            objectQueue.close();
-          })
-          .catch(error => {
-            console.log("add to queue failed see error = " + error.message);
-          });
-
         pool.query("DROP TABLE IF EXISTS " + tempTableforUpdate)
           .then(res => {
             pool.end();
@@ -120,11 +141,64 @@ function initiateJobSelection() {
             console.log("error occured => " + err.message);
             pool.end();
           });
+
+
+        if (consumerServiceName != "dockercompose") {
+
+          console.log("migration completed, now setting consumer service task count to 0");
+
+          var consumerParams = {
+            desiredCount: 0,
+            service: consumerServiceName,
+            cluster: clusterName
+          };
+
+          // Now set task count to 0 for ecs producer service
+          ecsUpdateService(consumerParams).then(function(res) {
+
+            console.log("task count set to 0 for consumer, now setting task count to 0 for producer");
+            var producerParams = {
+              desiredCount: 0,
+              service: producerServiceName,
+              cluster: clusterName
+            };
+            // Now set task count to 0 for ecs consumer service
+            return ecsUpdateService(producerParams).catch(function(err) {
+              console.log("error occured while setting producer task count to 0 => " + err.message);
+              //close redis queue
+              objectQueue.close();
+            });
+
+          }).then(function(res) {
+            //close redis queue
+            objectQueue.close();
+          }).catch(function(err) {
+            console.log("Error occured while changing ecs consumer task count " + err);
+            //close redis queue
+            // objectQueue.close();
+            // objectQueueSecondary.close();
+            console.log("will now check Db for pending tasks again");
+            initiateJobSelection();
+          })
+        } else {
+          //send migration completed indicatotr to queue if no prefixes need to be moved.
+          objectQueue.add({
+              bucketObjects: "migrationcompleted"
+            }).then(res => {
+              console.log("migrationcompleted indicator sent successfully");
+
+                objectQueue.close();
+
+            })
+            .catch(error => {
+              console.log("add to queue failed see error = " + error.message);
+            });
+        }
+
       }
     })
     // .then(res => process.exit();)
     .catch(err => console.log("error occured =>" + err.message));
-
 }
 
 // function to select prefixes that need to be moved.
@@ -223,7 +297,7 @@ objectQueue.on('global:drained', function(jobId, progress) {
       return pool.query("TRUNCATE TABLE " + tempTableforUpdate);
     }).then((res) => {
       //Previous batch now complete, check for pending jobs to be processed and initiate them
-       initiateJobSelection();
+      initiateJobSelection();
     })
     .catch(err => {
       //handle error
