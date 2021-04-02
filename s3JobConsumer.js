@@ -20,6 +20,25 @@ const dbPassword = GetEnvironmentVar("DB_PASSWORD", "");
 const databaseName = GetEnvironmentVar("DATABASE_NAME", "");
 const redisHost = GetEnvironmentVar("REDIS_HOST", "");
 
+// The environmental variables below are set by terraform ONLY when running in ECS mode
+const consumerServiceName = GetEnvironmentVar("CONSUMER_SERVICE_NAME", "dockercompose");
+const producerServiceName = GetEnvironmentVar("PRODUCER_SERVICE_NAME", "dockercompose");
+
+
+if (producerServiceName == "dockercompose") {
+  console.log("Service is running in docker-compose");
+
+  if (process.env["AWS_ACCESS_KEY_ID"] == "" || process.env["AWS_SECRET_ACCESS_KEY"] == "") {
+
+    console.log("Please set a value for AWS_SECRET_ACCESS_KEY and AWS_SECRET_ACCESS_KEY in terraform.tfvars, process will now end gracefully");
+    process.exit();
+
+  }
+
+} else {
+  console.log("Service is running in AWS ECS");
+}
+
 const redisPort = 6379;
 const connectionLimit = 10;
 var pushBucket = [];
@@ -33,10 +52,10 @@ const dbConfig = {
   connectionLimit: connectionLimit,
 };
 
+
 var redisParam = {
   port: redisPort,
-  host: redisHost,
-  enableOfflineQueue: false
+  host: redisHost
 }
 
 //initiate new Queue
@@ -80,6 +99,7 @@ try {
 }
 
 //event to process jobs as they are received
+console.log("now loading queue to wait for jobs");
 objectQueue.process(function(job, done) {
 
   pushBucket = [];
@@ -93,18 +113,29 @@ objectQueue.process(function(job, done) {
 
   if (job.data.bucketObjects == "migrationcompleted") {
     console.log("migration is completed, will end gracefully.")
-    objectQueue.close();
+    // objectQueue.close();
     pool.end();
     done();
-    objectQueueSecondary.add({
-        bucketObjects: "migrationcompleted"
-      }).then(res => {
-        console.log("migrationcompleted indicator sent successfully");
-        objectQueueSecondary.close();
-      })
-      .catch(error => {
-        console.log("add to queue failed see error = " + error.message);
-      });
+
+    if (producerServiceName != "dockercompose") {
+
+      console.log("migration completed");
+
+      console.log("Waiting for Producer to set consumer task count to 0");
+
+    } else {
+      // This is running in docker compose, end migration
+      objectQueue.close();
+      objectQueueSecondary.add({
+          bucketObjects: "migrationcompleted"
+        }).then(res => {
+          console.log("migrationcompleted indicator sent successfully");
+          objectQueueSecondary.close();
+        })
+        .catch(error => {
+          console.log("add to queue failed see error = " + error.message);
+        });
+    }
   }
 
   // Promise variable to hold list of all objects that have been successfully copied to destination bucket.
@@ -129,6 +160,11 @@ objectQueue.process(function(job, done) {
   });
 }).catch(error => console.log("Error occured, have a look " + error.message));
 
+objectQueue.on('error', function(err) {
+  console.log("Redis Queue is now unreachable or it has been shut down => " + err.message);
+  console.log("will now terminate");
+  process.exit(1);
+});
 
 // function to copy s3 object from one bucket to another.
 async function copyObjectToDestinationBucket(params, eachSourceObjectList) {
