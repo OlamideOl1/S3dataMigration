@@ -19,8 +19,10 @@ locals {
   launch_type = "FARGATE"
   cpu = "1024"
   memory = "4096"
+  ecs_consumer_service_name = "s3Mig_consumer_service"
+  ecs_producer_service_name = "s3Mig_producer_service"
+  ecs_cluster_name = "s3mig_ecs_cluster"
 }
-
 
 # retrieve repository details for containers to be used by tasks
 
@@ -32,51 +34,20 @@ data "aws_ecr_repository" "s3JobConsumer" {
   name = var.ECR_S3_JOB_CONSUMER_REPOSITORY_NAME
 }
 
-
 # Create networking resources to be used for ecs tasks.
 
 resource "aws_vpc" "main" {
-  cidr_block = "10.0.0.0/16"
+  cidr_block = "172.17.0.0/16"
   enable_dns_support = true
   enable_dns_hostnames = true
 }
 
 resource "aws_subnet" "main" {
   vpc_id     = aws_vpc.main.id
-  cidr_block = "10.0.1.0/24"
+  cidr_block = "172.17.1.0/24"
 
   tags = {
     Name = "Main"
-  }
-}
-
-data "aws_subnet_ids" "subnet" {
-  vpc_id = aws_vpc.main.id
-  depends_on = [
-    aws_subnet.main,
-  ]
-}
-
-resource "aws_security_group" "ecs_task" {
-  name        = "s3MigVPC"
-  vpc_id      = aws_vpc.main.id
-
-  ingress {
-  from_port       = 2049
-  to_port         = 2049
-  protocol        = "tcp"
-  cidr_blocks     = [aws_vpc.main.cidr_block]
-}
-
-   egress {
-    from_port       = 0
-    to_port         = 0
-    protocol        = "-1"
-    cidr_blocks     = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "ecs_task_sg"
   }
 }
 
@@ -99,10 +70,10 @@ resource "aws_cloudwatch_log_group" "s3Mig" {
   }
 }
 
-# Retrieve container definition details from s3mig-def.json and pass variables defined in terraform to be effected in container definition.
+# Retrieve container definition details from s3producer-def.json and pass variables defined in terraform to be effected in container definition.
 
-data "template_file" "s3mig" {
-  template = file("${path.module}/s3mig-def.json")
+data "template_file" "s3producer" {
+  template = file("${path.module}/s3producer-def.json")
   vars = {
     TARGET_S3_BUCKET = var.TARGET_S3_BUCKET
     SOURCE_S3_BUCKET = var.SOURCE_S3_BUCKET
@@ -120,7 +91,40 @@ data "template_file" "s3mig" {
     S3_CONSUMER_IMAGE_URL = data.aws_ecr_repository.s3JobConsumer.repository_url
     LOG_GROUP = aws_cloudwatch_log_group.s3Mig.name
     LOG_DEF_NAME = local.service_name
+    PRODUCER_SERVICE_NAME = local.ecs_producer_service_name
+    CONSUMER_SERVICE_NAME = local.ecs_consumer_service_name
+    CLUSTER_NAME = local.ecs_cluster_name
   }
+}
+
+# Retrieve container definition details from s3JobConsumer-def.json and pass variables defined in terraform to be effected in container definition.
+
+data "template_file" "s3JobConsumer" {
+  template = file("${path.module}/s3JobConsumer-def.json")
+  vars = {
+    TARGET_S3_BUCKET = var.TARGET_S3_BUCKET
+    SOURCE_S3_BUCKET = var.SOURCE_S3_BUCKET
+    TARGET_OBJECT_PREFIX = var.TARGET_OBJECT_PREFIX
+    TEMP_TABLE_FOR_UPDATE = var.TEMP_TABLE_FOR_UPDATE
+    DATABASE_HOST = var.DATABASE_HOST
+    DB_USER = var.DB_USER
+    DB_PASSWORD = var.DB_PASSWORD
+    DATABASE_NAME = var.DATABASE_NAME
+    LEGACY_S3_OBJECT_PREFIX = var.LEGACY_S3_OBJECT_PREFIX
+    DATABASE_TABLE_TO_UPDATE = var.DATABASE_TABLE_TO_UPDATE
+    TABLE_COLUMN_NAME_TO_UPDATE = var.TABLE_COLUMN_NAME_TO_UPDATE
+    AWS_REGION = var.AWS_REGION
+    S3_PRODUCER_IMAGE_URL = data.aws_ecr_repository.s3JobProducer.repository_url
+    S3_CONSUMER_IMAGE_URL = data.aws_ecr_repository.s3JobConsumer.repository_url
+    LOG_GROUP = aws_cloudwatch_log_group.s3Mig.name
+    LOG_DEF_NAME = local.service_name
+    REDIS_HOST_NAME = "${aws_service_discovery_service.producer_task.name}.${aws_service_discovery_private_dns_namespace.basetask.name}"
+    CONSUMER_SERVICE_NAME = local.ecs_consumer_service_name
+    PRODUCER_SERVICE_NAME = local.ecs_producer_service_name
+  }
+  depends_on = [
+    aws_ecs_service.producer_service
+  ]
 }
 
 # Create IAM role for ecs task execution and attach relevant policies to the ecs execution role
@@ -194,6 +198,15 @@ resource "aws_iam_policy" "ecs_task_role_policy" {
         "arn:aws:s3:::${var.TARGET_S3_BUCKET}/*",
         "arn:aws:s3:::${var.TARGET_S3_BUCKET}"
       ]
+    },
+    {
+      "Sid": "Stmt1617296973068",
+      "Action": [
+        "ecs:UpdateService",
+        "ecs:StopTask"
+      ],
+      "Effect": "Allow",
+      "Resource": "*"
     }
   ]
 }
@@ -205,115 +218,19 @@ resource "aws_iam_role_policy_attachment" "ecs-task-job-role-policy-attachment" 
   policy_arn = aws_iam_policy.ecs_task_role_policy.arn
 }
 
-# Create IAM role to be used by ecs event trigger and attach relevant policies to the lambda function
-
-resource "aws_iam_role" "ecs_events" {
-  name = "ecs_events"
-
-  assume_role_policy = <<DOC
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "",
-      "Effect": "Allow",
-      "Principal": {
-        "Service": "events.amazonaws.com"
-      },
-      "Action": "sts:AssumeRole"
-    }
-  ]
-}
-DOC
-}
-
-resource "aws_iam_policy" "ecs_events_run_task" {
-  name = "ecs_events_run_task"
-  policy = <<DOC
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": "iam:PassRole",
-            "Resource": "*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": "ecs:RunTask",
-            "Resource": "${aws_ecs_task_definition.definition.arn}"
-        }
-    ]
-}
-DOC
-}
-
-resource "aws_iam_role_policy_attachment" "ecs_events_run_task" {
-  role       = aws_iam_role.ecs_events.name
-  policy_arn = aws_iam_policy.ecs_events_run_task.arn
-}
-
-# Create IAM role to be used by lambda function and attach relevant policies to the lambda function
-
-resource "aws_iam_role" "ecs_lambda_events" {
-  name = "ecs_lambda_events"
-
-  assume_role_policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "",
-      "Effect": "Allow",
-      "Principal": {
-        "Service": "lambda.amazonaws.com"
-      },
-      "Action": "sts:AssumeRole"
-    }
-  ]
-}
-EOF
-}
-
-resource "aws_iam_policy" "ecs_lambda_disable_rule" {
-  name = "ecs_lambda_events_run_task_with_any_role"
-  policy = <<EOF
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-              "events:DisableRule",
-              "logs:CreateLogGroup",
-              "logs:CreateLogStream",
-              "logs:PutLogEvents"
-              ],
-            "Resource": "*"
-        }
-    ]
-}
-EOF
-}
-
-resource "aws_iam_role_policy_attachment" "ecs_lambda_disable_rule" {
-  role       = aws_iam_role.ecs_lambda_events.name
-  policy_arn = aws_iam_policy.ecs_lambda_disable_rule.arn
-}
-
 # Create cluster to be used for task deployment
 
 resource "aws_ecs_cluster" "cluster" {
-  name = "${local.service_name}-cluster"
+  name = local.ecs_cluster_name
 }
 
 # Creat ecs task definition using container definition template retrieved earlier.
 # This task also has support for efs. EFS has been mounted on the redis container
 # The redis container will now persist data to the efs storage.
 
-resource "aws_ecs_task_definition" "definition" {
+resource "aws_ecs_task_definition" "producer_definition" {
   family                   = "${local.service_name}-task-definition"
-  container_definitions    = data.template_file.s3mig.rendered
+  container_definitions    = data.template_file.s3producer.rendered
   task_role_arn            = aws_iam_role.ecs_task_role.arn
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   requires_compatibilities = [local.launch_type]
@@ -333,75 +250,188 @@ resource "aws_ecs_task_definition" "definition" {
       root_directory  = "/opt/data"
     }
   }
-}
-
-# Creat cloudwatch event rule to trigger every minute
-# Note this rule will be disabled after its first execution by a lambda function.
-
-resource "aws_cloudwatch_event_rule" "scheduled_task" {
-  name                = "scheduled-ecs-event-rule"
-  schedule_expression = "cron(* * * * ? *)"
   depends_on = [
-    aws_lambda_function.lambda_event_run_task
+    aws_efs_mount_target.task
   ]
 }
 
-# Creat cloudwatch event target to trigger ecs target
-# This event target will launch the containers using the provided task definition resource
+resource "aws_ecs_task_definition" "s3JobConsumer_definition" {
+  family                   = "${local.service_name}-s3JobConsumer_definition"
+  container_definitions    = data.template_file.s3JobConsumer.rendered
+  task_role_arn            = aws_iam_role.ecs_task_role.arn
+  execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
+  requires_compatibilities = [local.launch_type]
+  network_mode             = "awsvpc"
+  cpu                      = local.cpu
+  memory                   = local.memory
+  depends_on = [
+    aws_ecs_service.producer_service,
+    aws_security_group.producer_task,
+    aws_service_discovery_service.producer_task,
+    aws_ecs_task_definition.producer_definition,
+    aws_efs_mount_target.task
+  ]
+}
 
-resource "aws_cloudwatch_event_target" "scheduled_task" {
-  rule      = aws_cloudwatch_event_rule.scheduled_task.name
-  arn       = aws_ecs_cluster.cluster.arn
-  role_arn  = aws_iam_role.ecs_events.arn
+// service descovery resources
 
-  ecs_target {
-    task_count          = 1
-    task_definition_arn = aws_ecs_task_definition.definition.arn
-    launch_type         = local.launch_type
-    network_configuration {
-      subnets          = data.aws_subnet_ids.subnet.ids
-      assign_public_ip = true
-      security_groups  = [aws_security_group.ecs_task.id]
+resource "aws_service_discovery_private_dns_namespace" "basetask" {
+  name        = "local.com"
+  description = "s3_consumer_task"
+  vpc         = aws_vpc.main.id
+
+}
+
+resource "aws_service_discovery_service" "producer_task" {
+  name = "producer"
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.basetask.id
+    dns_records {
+      ttl  = 10
+      type = "A"
     }
+    routing_policy = "MULTIVALUE"
+  }
+  health_check_custom_config {
+    failure_threshold = 4
   }
 }
 
-# Creat lambda funtion to disable cloudwatch rule once it is triggered.
+# resource "aws_service_discovery_service" "consumer_task" {
+#   name = "consumer"
+#   dns_config {
+#     namespace_id = aws_service_discovery_private_dns_namespace.basetask.id
+#     dns_records {
+#       ttl  = 10
+#       type = "A"
+#
+#     }
+#     routing_policy = "MULTIVALUE"
+#   }
+#   health_check_custom_config {
+#     failure_threshold = 4
+#   }
+#   depends_on = [
+#     aws_ecs_service.producer_service,
+#     aws_security_group.producer_task,
+#     aws_service_discovery_service.producer_task,
+#     aws_ecs_task_definition.producer_definition
+#   ]
+# }
 
-resource "aws_lambda_function" "lambda_event_run_task" {
-  filename      = "lambdatask.zip"
-  function_name = "lambdatasks"
-  role          = aws_iam_role.ecs_lambda_events.arn
-  handler       = "exports.handler"
-  runtime       = "nodejs14.x"
+//////////////////////////////////////////////////////////////////////////////////////
+
+resource "aws_security_group" "producer_task" {
+  name        = "${local.service_name}_producer_task_sg"
+  description = "allow inbound access to producer on redis port"
+  vpc_id      = aws_vpc.main.id
+
+// Ingress rule for Redis server
+  ingress {
+  from_port       = 6379
+  to_port         = 6379
+  protocol        = "tcp"
+  cidr_blocks     = ["0.0.0.0/0"]
+  # cidr_blocks     = [aws_vpc.main.cidr_block]
+}
+
+// Ingress rule for EFS
+ingress {
+from_port       = 2049
+to_port         = 2049
+protocol        = "tcp"
+cidr_blocks     = [aws_vpc.main.cidr_block]
+}
+
+  egress {
+    protocol    = "-1"
+    from_port   = 0
+    to_port     = 0
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+
+resource "aws_security_group" "consumer_task" {
+  name        = "${local.service_name}_consumer_task_sg"
+  description = "allow access to producer on redis port"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    protocol    = "-1"
+    from_port   = 0
+    to_port     = 0
+
+    cidr_blocks = [aws_vpc.main.cidr_block]
+  }
+
+  egress {
+    protocol    = "-1"
+    from_port   = 0
+    to_port     = 0
+
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  depends_on = [
+    aws_ecs_service.producer_service,
+    aws_security_group.producer_task,
+    aws_service_discovery_service.producer_task,
+    aws_ecs_task_definition.producer_definition,
+    aws_efs_mount_target.task
+  ]
 
 }
 
-# Creat cloudwatch event target to lambda function target
-# This lambda event will disable the cloudwatch event rule to avoid repeated tasks deployment.
+//////////////////////////////////////////////////////////////////
 
-resource "aws_cloudwatch_event_target" "lambda_disable_rule" {
-  target_id = "lambda"
-  arn  = aws_lambda_function.lambda_event_run_task.arn
-  rule = aws_cloudwatch_event_rule.scheduled_task.name
+resource "aws_ecs_service" "producer_service" {
+  name            = local.ecs_producer_service_name
+  cluster         = aws_ecs_cluster.cluster.id
+  task_definition = aws_ecs_task_definition.producer_definition.arn
+  desired_count   = 1
+  launch_type     = local.launch_type
 
-  input = <<EOF
-{
-  "rulename": "${aws_cloudwatch_event_rule.scheduled_task.name}"
+  network_configuration {
+    security_groups  = [aws_security_group.producer_task.id]
+    subnets          = aws_subnet.main.*.id
+    assign_public_ip = true
+  }
+
+  service_registries {
+      registry_arn = aws_service_discovery_service.producer_task.arn
+      container_name = "redis"
+  }
+  depends_on = [
+    aws_efs_mount_target.task
+  ]
+
 }
-EOF
+
+resource "aws_ecs_service" "consumer_service" {
+  name            = local.ecs_consumer_service_name
+  cluster         = aws_ecs_cluster.cluster.id
+  task_definition = aws_ecs_task_definition.s3JobConsumer_definition.arn
+  desired_count   = var.CONSUMER_TASK_COUNT
+  launch_type     = local.launch_type
+
+  network_configuration {
+    security_groups  = [aws_security_group.consumer_task.id]
+    subnets          = aws_subnet.main.*.id
+    assign_public_ip = true
+  }
+
+  # service_registries {
+  #     registry_arn = aws_service_discovery_service.consumer_task.arn
+  #     container_name = "s3jobconsumer"
+  # }
+
+  depends_on = [
+    aws_ecs_service.producer_service,
+    aws_security_group.producer_task,
+    aws_service_discovery_service.producer_task,
+    aws_efs_mount_target.task
+  ]
 }
-
-# Creat lambda permission to allow cloudwatch trigger the specified lambda function
-
-resource "aws_lambda_permission" "allow_cloudwatch" {
-  statement_id  = "AllowExecutionFromCloudWatch"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.lambda_event_run_task.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.scheduled_task.arn
-}
-
 
 # EFS Related Configuration are placed below.
 
@@ -453,7 +483,7 @@ POLICY
 resource "aws_efs_mount_target" "task" {
   file_system_id = aws_efs_file_system.fs.id
   subnet_id      = aws_subnet.main.id
-  security_groups = [aws_security_group.ecs_task.id]
+  security_groups = [aws_security_group.producer_task.id]
 }
 
 
