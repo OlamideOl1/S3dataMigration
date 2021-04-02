@@ -1,0 +1,89 @@
+[
+  {
+    "name": "s3jobproducer",
+    "image": "${S3_PRODUCER_IMAGE_URL}",
+    "essential": true,
+    "healthCheck": {
+        "command": ["CMD", "ping", "localhost","-c","1"],
+        "interval": 10,
+        "retries": 10,
+        "startPeriod": 20
+      },
+    "command": ["node", "s3JobProducer.js"],
+    "logConfiguration": {
+      "logDriver": "awslogs",
+      "Options": {
+        "awslogs-region": "${AWS_REGION}",
+        "awslogs-group": "${LOG_GROUP}",
+        "awslogs-stream-prefix": "${LOG_DEF_NAME}"
+      }
+    },
+    "environment" : [
+      { "name" :"TARGET_S3_BUCKET" , "value" : "${TARGET_S3_BUCKET}" },
+        { "name" :"SOURCE_S3_BUCKET" , "value" : "${SOURCE_S3_BUCKET}" },
+        { "name" :"TARGET_OBJECT_PREFIX" , "value" : "${TARGET_OBJECT_PREFIX}" },
+        { "name" :"TEMP_TABLE_FOR_UPDATE" , "value" : "${TEMP_TABLE_FOR_UPDATE}" },
+        { "name" :"DATABASE_HOST" , "value" : "${DATABASE_HOST}" },
+        { "name" :"DB_USER" , "value" : "${DB_USER}" },
+        { "name" :"DB_PASSWORD" , "value" : "${DB_PASSWORD}" },
+        { "name" :"DATABASE_NAME" , "value" : "${DATABASE_NAME}" },
+        { "name" :"LEGACY_S3_OBJECT_PREFIX" , "value" : "${LEGACY_S3_OBJECT_PREFIX}" },
+        { "name" :"DATABASE_TABLE_TO_UPDATE" , "value" : "${DATABASE_TABLE_TO_UPDATE}" },
+        { "name" :"TABLE_COLUMN_NAME_TO_UPDATE" , "value" : "${TABLE_COLUMN_NAME_TO_UPDATE}" },
+        { "name" :"REDIS_HOST" , "value" : "localhost" },
+        { "name" :"AWS_REGION" , "value" : "${AWS_REGION}" },
+        { "name" :"CONSUMER_SERVICE_NAME" , "value" : "${CONSUMER_SERVICE_NAME}" },
+        { "name" :"PRODUCER_SERVICE_NAME" , "value" : "${PRODUCER_SERVICE_NAME}" },
+        { "name" :"CLUSTER_NAME" , "value" : "${CLUSTER_NAME}" }
+    ],
+    "dependsOn": [
+      {
+        "containerName": "redis",
+        "condition": "HEALTHY"
+      }
+    ]
+  },
+  {
+    "name": "redis",
+    "image": "redis",
+    "command" : ["redis-server", "--appendonly", "yes"],
+    "essential": true,
+    "networkMode": "awsvpc",
+    "healthCheck": {
+        "command": ["CMD", "redis-cli", "ping"],
+        "interval": 15,
+        "retries": 10,
+        "startPeriod": 20
+      },
+    "logConfiguration": {
+      "logDriver": "awslogs",
+      "Options": {
+        "awslogs-region": "${AWS_REGION}",
+        "awslogs-group": "${LOG_GROUP}",
+        "awslogs-stream-prefix": "${LOG_DEF_NAME}"
+      }
+    },
+    "mountPoints": [
+                {
+                    "sourceVolume": "task-efs",
+                    "containerPath": "/data",
+                    "readOnly": false
+                }
+            ],
+            "portMappings": [
+        {
+          "hostPort": 6379,
+          "protocol": "tcp",
+          "containerPort": 6379
+        }
+      ],
+      "ulimits": [
+        {
+          "softLimit": 65536,
+          "hardLimit": 65536,
+          "name": "nofile"
+        }
+      ]
+  }
+
+]
