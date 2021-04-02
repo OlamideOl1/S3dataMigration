@@ -175,6 +175,9 @@ resource "aws_iam_role" "ecs_task_role" {
 EOF
 }
 
+// This iam policy provides access to the source and target buckets
+// This iam polic also provides access to the s3JobConsumer so it can set desired task count to 0 when migration is completed
+
 resource "aws_iam_policy" "ecs_task_role_policy" {
   name = "ecs_task_role_policy"
   description = "IAM Policy for ecs task operation"
@@ -297,30 +300,6 @@ resource "aws_service_discovery_service" "producer_task" {
   }
 }
 
-# resource "aws_service_discovery_service" "consumer_task" {
-#   name = "consumer"
-#   dns_config {
-#     namespace_id = aws_service_discovery_private_dns_namespace.basetask.id
-#     dns_records {
-#       ttl  = 10
-#       type = "A"
-#
-#     }
-#     routing_policy = "MULTIVALUE"
-#   }
-#   health_check_custom_config {
-#     failure_threshold = 4
-#   }
-#   depends_on = [
-#     aws_ecs_service.producer_service,
-#     aws_security_group.producer_task,
-#     aws_service_discovery_service.producer_task,
-#     aws_ecs_task_definition.producer_definition
-#   ]
-# }
-
-//////////////////////////////////////////////////////////////////////////////////////
-
 resource "aws_security_group" "producer_task" {
   name        = "${local.service_name}_producer_task_sg"
   description = "allow inbound access to producer on redis port"
@@ -331,8 +310,8 @@ resource "aws_security_group" "producer_task" {
   from_port       = 6379
   to_port         = 6379
   protocol        = "tcp"
-  cidr_blocks     = ["0.0.0.0/0"]
-  # cidr_blocks     = [aws_vpc.main.cidr_block]
+  # cidr_blocks     = ["0.0.0.0/0"]
+  cidr_blocks     = [aws_vpc.main.cidr_block]
 }
 
 // Ingress rule for EFS
@@ -382,7 +361,7 @@ resource "aws_security_group" "consumer_task" {
 
 }
 
-//////////////////////////////////////////////////////////////////
+// create ecs service for producer
 
 resource "aws_ecs_service" "producer_service" {
   name            = local.ecs_producer_service_name
@@ -407,6 +386,7 @@ resource "aws_ecs_service" "producer_service" {
 
 }
 
+// create ecs service for consumer
 resource "aws_ecs_service" "consumer_service" {
   name            = local.ecs_consumer_service_name
   cluster         = aws_ecs_cluster.cluster.id
@@ -419,11 +399,6 @@ resource "aws_ecs_service" "consumer_service" {
     subnets          = aws_subnet.main.*.id
     assign_public_ip = true
   }
-
-  # service_registries {
-  #     registry_arn = aws_service_discovery_service.consumer_task.arn
-  #     container_name = "s3jobconsumer"
-  # }
 
   depends_on = [
     aws_ecs_service.producer_service,
