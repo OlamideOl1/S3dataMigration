@@ -1,0 +1,28 @@
+{
+  "name": "s3objectmigrator",
+  "version": "1.0.0",
+  "description": "migrate s3 objects",
+  "main": "s3JobProducer.js",
+  "dependencies": {
+    "aws-sdk": "^2.875.0",
+    "bull": "^3.20.1",
+    "ioredis": "^4.24.2",
+    "mariadb": "^2.5.3",
+    "q": "^1.5.1",
+    "timediff": "^1.1.1"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OlamideOl1/S3dataMigration.git"
+  },
+  "author": "Olamide Olaoye",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/OlamideOl1/S3dataMigration/issues"
+  },
+  "homepage": "https://github.com/OlamideOl1/S3dataMigration#readme"
+}

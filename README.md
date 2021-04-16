@@ -1,8 +1,5 @@
 # SRE Test Solution
 
-This task has been completed using Nodejs. Also please note that the database used in this solution is `MariaDb`. Quite a lot of benchmarks tests and simulations were already completed using a sample `MariaDB` database as specified in the first project document I was given.
-
-Adequate time will be required to modify all existing methods to use `PostgreSQL` and complete some benchmark tests to gauge performance index.
 
 ## Summary of development
 
@@ -16,7 +13,7 @@ It consists of 3 major parts;
 
 ## Resource Emulation for task
 
-To properly emulate resources for this task, a `MariaDB` docker container was used as the Production database, the following programs were used to prepare simulate the resources for use.
+To properly emulate resources for this task, a `MariaDB` docker container was used as the Production database, all scripts required to simulate this task are containerd in the `task-Emulation` folder. The following programs were used to prepare simulate the resources for use.
 
 - createSampleDBTable.js
 This Nodejs program will create a sample table if it does not exist already with 2 columns; An auto generated ID column and another column for the `legacy` image name.
@@ -28,6 +25,8 @@ This nodejs program to pick sample jobs from redis queue to simulate as much as 
 This nodejs program to clear queue contents while testing.
 - pushDummyS3objectsforTest.js
 This Nodejs program was used to upload sample objects to s3 bucket using AWS S3.
+
+#### Note!, Run npm install in this directory before using any of these scripts to install the necessary npm modules.
 
 ## Task Resolution
 
@@ -41,7 +40,7 @@ This solution is decoupled, so it can always resume from where it stops and the 
 
 ## Solution Deployment.
 
-For this solution, two deployment options are available in the git repository provided. `Option 1`makes use of AWS ECS to run the programs as tasks. `Option 2` makes use of docker-compose to run this program locally, or on an EC2 instance. Before proceeding to using either of these options, the terraform configuration file; `terraform.tfvars` MUST be updated. below are the configuration details to be provided;
+For this solution, the terraform configuration file; `terraform.tfvars` MUST be updated. below are the configuration details to be provided;
 
 - `ECR_S3_JOB_PRODUCER_REPOSITORY_NAME`=> Repository name for s3jobproducer image in ECR.  Example: "s3jobproducer"
 - `ECR_S3_JOB_CONSUMER_REPOSITORY_NAME`=> Repository name for s3jobconsumer image in ECR.   Example: "s3jobconsumer"
@@ -59,19 +58,16 @@ For this solution, two deployment options are available in the git repository pr
 - `AWS_REGION`=> Default AWS Region to use for migration. A default value has been provided.
 - `CONSUMER_TASK_COUNT`=> Number of tasks to be started by the ECS consumer service. A default value of 1 will be used.
 
-####Please Note!
-The AWS Access key details below should only be provided when using the local / docker-compse deployment option, for ECS deployment option, do not specify these details, necessary roles are provided in terraform template
-- `AWS_ACCESS_KEY_ID`=> This key ID will be generated for you using a terraform template using the least privileges required by the IAM user.
-- `AWS_SECRET_ACCESS_KEY`=> This secret key will be generated for you using a terraform template using the least privileges required by the IAM user.
-
 ### Solution deployment on AWS ECS
 
 Both the s3JobProducer and s3JobConsumer will be containerized, uploaded to AWS ECR and deployed together with a redis container, this deployment is done using `Terraform` to minimize configuration. Kindly follow the deployment steps below;
 - Navigate to the project directory
+- change directory into `application-Containerization`
 - Run `docker-compose build` command to build docker images for s3JobProducer and s3JobConsumer from the project directory.
 - Create a repository in ECR for s3JobProducer and s3JobConsumer.
 - Tag and Push the new images to AWS ECR. `Take Note`, ensure you keep the repository name that was created.
-- Update the ECR_S3_JOB_PRODUCER_REPOSITORY_NAME and ECR_S3_JOB_CONSUMER_REPOSITORY_NAME with the `repository names` created for s3JobProducer and s3JobProducer respectively.
+- navigate to the directory named `terraform-Deployment-Files` in the project directory.
+- Update the ECR_S3_JOB_PRODUCER_REPOSITORY_NAME and ECR_S3_JOB_CONSUMER_REPOSITORY_NAME in the `terraform.tfvars` file with the `repository names` created for s3JobProducer and s3JobProducer respectively.
 - confirm all configuration variables have been provided.
 - from the project directory, run `terraform init`.
 - from the project directory, run `terraform apply`, type `yes` to confirm the deployment of the resources.
@@ -84,32 +80,12 @@ Once the database has been successfully updated, the s3JobProducer will call the
 
 `Pleaes Note:` The s3Mig_producer_service and s3Mig_consumer_service may take close to 5 mins to get stable at first launch. This is due to the amount of time spent in allocating EFS and mounting it on redis.
 
-### Solution deployment on docker-compose
-
-To deploy this solution locally on a docker enabled host (locally OR an EC2 instance), follow the steps below. Note, make sure docker-compose installed on the host
-- Navigate to the project directory
-- ensure sure all configuration variables except `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` have been set in `terraform.tfvars`
-- run `cd dockerComposeIamAccess` to change directory to folder named dockerComposeIamAccess.
-- run `terraform apply -var-file ../terraform.tfvars` to create IAM access details to be used for the migration. This IAM user details will have the least privilege required for this migration. Please note that the policy definition used by terraform for the IAM user is written inline inside .`/dockerComposeIamAccess/iamUserForMigration.tf`
-- The `secret key` and the `secret key id` will be printed on screen and are also stored in files named `s3MigAccessKeyID.txt` and `s3MigSecretAccessKey.txt` respectively.
-- run `cd ../` to navigate to back to the project directory
-- Open the `terraform.tfvars` file and update
-- update the configuration variables `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in `terraform.tfvars` with the generated `secret key` and `secret key id` respectively.
-- Run `docker-compose build` command to build docker images for s3jobproducer and s3jobconsumer from the project directory.
-- To start migration process, run the command `docker-compose up` to run in an interactive mode or `docker-compose up -d` for background processing.
-- Once migration is complete, s3jobproducer and s3jobconsumer will stop.
-- run `docker-compose down` to kill the process OR CTRL+C if running in interactive mode.
-- run `cd dockerComposeIamAccess` to change directory to folder named dockerComposeIamAccess.
-- run `terraform destroy -var-file ../terraform.tfvars` to destroy the provisioned IAM access details used for the migration.
-
 ## Performance and Scalability
 - Performance: This deployment option is very effective as it leverages on the resources provided on `ECS Fargate`, The database quries are also very optimized using batch queries. using a benchmark test performed locally, using standalone deployment of with just 1 consumer, it could migrate about `5,900 records` per `second.`
 
-- Scalability: Both deployment options are fully scalable, `on ECS`, the s3JobConsumer container is on a separate ECS service. This enables it to `scale independently` by modifying the `desired task count`. You can also modify the `CONSUMER_TASK_COUNT` in the `tarraform.tfvars` file, this will adjust the desire task count value the next time you run `terraform apply`.
+- Scalability: this solution fully scalable, `on ECS`, the s3JobConsumer container is on a separate ECS service. This enables it to `scale independently` by modifying the `desired task count`. You can also modify the `CONSUMER_TASK_COUNT` in the `tarraform.tfvars` file, this will adjust the desire task count value the next time you run `terraform apply`.
 
-`on docker-compose`, This solution will also prove to be scalable by adjusting the number of `replicas` for the `s3jobconsumer` container. You can scale up the s3jobconsumer container by adjusting the replicas section under the deploy section of s3jobconsumer OR you can run this command after the service has been started => `docker-compose scale s3jobconsumer=<number of replicas>`
-
-- Failure proof / Resilience: This solution is also failure proof. As an `EFS` resource has been mounted on the `redis` container in ECS to ensure that if the task is terminated, the redis data will be `persisted` to EFS so the pending jobs will always be preserved in the queue. The `docker-compose` deployment option is also failure proof as the redis container has a `volume mount` to enable it persist data to disk even if the container is destroyed.
+- Failure proof / Resilience: This solution is also failure proof. As an `EFS` resource has been mounted on the `redis` container in ECS to ensure that if the task is terminated, the redis data will be `persisted` to EFS so the pending jobs will always be preserved in the queue.
 
 ## User Privileges
 
@@ -142,5 +118,5 @@ To deploy this solution locally on a docker enabled host (locally OR an EC2 inst
     }
   ]
 }`
-- Please note that this policy will be automatically added to the create IAM user when using the docker-compose deployment option.
+
 - When using the AWS ECS deployment option, please note that this policy will be attached to the `task_role` for the task definition. Please review the `main.tf` file for more details.

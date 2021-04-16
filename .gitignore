@@ -9,6 +9,10 @@ s3MigAccessKeyID.txt
 s3MigSecretAccessKey.txt
 terraform.tfstate.backup
 dockerEnvFile
-lambdaTask
+lambdaTask*
 terraform.tfstate.d
 ecsDeployment
+my-values-in-terraform.tfvars-blocker
+README_with-docker-compose.md
+**/dockerComposeIamAccess/*
+lambdatask.zip

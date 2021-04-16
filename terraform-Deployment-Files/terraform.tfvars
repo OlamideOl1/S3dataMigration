@@ -31,9 +31,3 @@ TABLE_COLUMN_NAME_TO_UPDATE="Imagepath"
 AWS_REGION="us-east-1"
 # Number of tasks to be started by the consumer service. A default value of 1 has been provided.
 CONSUMER_TASK_COUNT = 1
-
-# Please Note!
-# The AWS Access key details below should only be provided when using the local / docker-compse deployment option.
-# for ECS deployment option, do not specify these details, neccessary roles are provided in terraform template
-AWS_ACCESS_KEY_ID="AKIAXBHIKTMFX4NKMLAV"
-AWS_SECRET_ACCESS_KEY="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"
