@@ -36,12 +36,6 @@ variable "DATABASE_TABLE_TO_UPDATE" {
 variable "TABLE_COLUMN_NAME_TO_UPDATE" {
 }
 
-variable "AWS_ACCESS_KEY_ID" {
-}
-
-variable "AWS_SECRET_ACCESS_KEY" {
-}
-
 variable "ECR_S3_JOB_PRODUCER_REPOSITORY_NAME" {
 }
 
